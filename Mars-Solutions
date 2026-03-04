@@ -1,0 +1,814 @@
+--==================================================
+-- Mars Solutions | UI v5 + SNAP AIM + ESP + CLIENT
+--==================================================
+
+--// Services
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local Camera = workspace.CurrentCamera
+
+local LocalPlayer = Players.LocalPlayer
+
+--==================================================
+-- State
+--==================================================
+
+local ADS = false
+local AimFOV = 120
+local AimStrength = 8
+local Prediction = 0
+local VisibleCheck = false
+
+local WalkSpeed = 16
+local JumpPower = 50
+local CameraFOV = 70
+
+local CFrameMoveEnabled = false
+local CFrameWalkSpeed = 24
+local CFrameJumpSpeed = 18
+
+local BoneESPEnabled = false
+local TracersEnabled = false
+local BoneLines = {}
+local TracerLines = {}
+
+local AimPartOptions = { "Head", "UpperTorso", "HumanoidRootPart" }
+local AimPartIndex = 1
+
+local Theme = {
+	Accent = Color3.fromRGB(255, 70, 70),
+	Main = Color3.fromRGB(12, 12, 12),
+	Header = Color3.fromRGB(16, 16, 16),
+	Panel = Color3.fromRGB(20, 20, 20),
+	Button = Color3.fromRGB(22, 22, 22),
+	ButtonHover = Color3.fromRGB(30, 30, 30),
+	Bar = Color3.fromRGB(30, 30, 30),
+	Text = Color3.fromRGB(220, 220, 220),
+	SubText = Color3.fromRGB(150, 150, 150),
+	Online = Color3.fromRGB(70, 220, 120),
+	Offline = Color3.fromRGB(230, 70, 70),
+}
+
+local Connections = {}
+local Unloaded = false
+
+--==================================================
+-- Helpers
+--==================================================
+
+local function connect(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(Connections, c)
+	return c
+end
+
+local function tween(obj, props, t)
+	TweenService:Create(obj, TweenInfo.new(t or 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+end
+
+local function disconnectAll()
+	for _, c in ipairs(Connections) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+	table.clear(Connections)
+end
+
+local function clearAllDrawings()
+	for _, lines in pairs(BoneLines) do
+		for _, l in pairs(lines) do
+			pcall(function()
+				l:Remove()
+			end)
+		end
+	end
+	for _, l in pairs(TracerLines) do
+		pcall(function()
+			l:Remove()
+		end)
+	end
+	BoneLines = {}
+	TracerLines = {}
+end
+
+local function isAliveCharacter(char)
+	if not char then return false end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	return hum and hum.Health > 0
+end
+
+local function newDrawingLine(thickness)
+	if not Drawing then return nil end
+	local l = Drawing.new("Line")
+	l.Color = Theme.Accent
+	l.Thickness = thickness
+	l.Transparency = 1
+	l.Visible = false
+	return l
+end
+
+local function getAimPart(character)
+	local preferred = character:FindFirstChild(AimPartOptions[AimPartIndex])
+	if preferred then return preferred end
+	return character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function isVisible(targetPart)
+	if not VisibleCheck then return true end
+	local origin = Camera.CFrame.Position
+	local dir = targetPart.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.FilterDescendantsInstances = { LocalPlayer.Character }
+	params.IgnoreWater = true
+	local hit = workspace:Raycast(origin, dir, params)
+	return (not hit) or hit.Instance:IsDescendantOf(targetPart.Parent)
+end
+
+local function getAimPoint(part)
+	return part.Position + part.AssemblyLinearVelocity * Prediction
+end
+
+local function getTarget()
+	local center = Camera.ViewportSize / 2
+	local best, bestDist = nil, AimFOV
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and p.Team ~= LocalPlayer.Team then
+			local part = getAimPart(p.Character)
+			if part and isVisible(part) then
+				local pos, vis = Camera:WorldToViewportPoint(getAimPoint(part))
+				if vis then
+					local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+					if dist <= bestDist then
+						bestDist = dist
+						best = part
+					end
+				end
+			end
+		end
+	end
+
+	return best
+end
+
+--==================================================
+-- ScreenGui
+--==================================================
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MarsSolutionsUI"
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = game:GetService("CoreGui")
+
+--==================================================
+-- Main Window
+--==================================================
+
+local Main = Instance.new("Frame", ScreenGui)
+Main.Size = UDim2.fromScale(0.34, 0.46)
+Main.Position = UDim2.fromScale(0.5, 0.5)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.BackgroundColor3 = Theme.Main
+Main.BorderSizePixel = 0
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 14)
+
+local Stroke = Instance.new("UIStroke", Main)
+Stroke.Color = Theme.Accent
+Stroke.Thickness = 1.5
+Stroke.Transparency = 0.25
+
+local Header = Instance.new("Frame", Main)
+Header.Size = UDim2.new(1, 0, 0, 58)
+Header.BackgroundColor3 = Theme.Header
+Header.BorderSizePixel = 0
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 14)
+
+local Title = Instance.new("TextLabel", Header)
+Title.Size = UDim2.new(1, -170, 0, 22)
+Title.Position = UDim2.new(0, 14, 0, 8)
+Title.BackgroundTransparency = 1
+Title.Text = "MARS SOLUTIONS"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.TextColor3 = Theme.Accent
+
+local Subtitle = Instance.new("TextLabel", Header)
+Subtitle.Size = UDim2.new(1, -170, 0, 18)
+Subtitle.Position = UDim2.new(0, 14, 0, 30)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "a tool by Mars"
+Subtitle.Font = Enum.Font.Gotham
+Subtitle.TextSize = 11
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+Subtitle.TextColor3 = Theme.SubText
+
+local function HeaderButton(text, offset)
+	local b = Instance.new("TextButton", Header)
+	b.Size = UDim2.new(0, 28, 0, 28)
+	b.Position = UDim2.new(1, offset, 0.5, 0)
+	b.AnchorPoint = Vector2.new(1, 0.5)
+	b.BackgroundColor3 = Theme.Button
+	b.Text = text
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 14
+	b.TextColor3 = Theme.Text
+	b.BorderSizePixel = 0
+	Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
+	connect(b.MouseEnter, function() tween(b, { BackgroundColor3 = Theme.ButtonHover }, 0.1) end)
+	connect(b.MouseLeave, function() tween(b, { BackgroundColor3 = Theme.Button }, 0.1) end)
+	return b
+end
+
+local Minimize = HeaderButton("–", -38)
+local Close = HeaderButton("×", -8)
+
+local Body = Instance.new("Frame", Main)
+Body.Size = UDim2.new(1, -20, 1, -78)
+Body.Position = UDim2.new(0, 10, 0, 68)
+Body.BackgroundTransparency = 1
+
+local Tabs = Instance.new("Frame", Body)
+Tabs.Size = UDim2.new(1, 0, 0, 32)
+Tabs.BackgroundTransparency = 1
+
+local Pages = Instance.new("Frame", Body)
+Pages.Size = UDim2.new(1, 0, 1, -38)
+Pages.Position = UDim2.new(0, 0, 0, 38)
+Pages.BackgroundTransparency = 1
+
+local TabButtons, TabPages = {}, {}
+
+local function CreatePage(name)
+	local page = Instance.new("Frame", Pages)
+	page.Size = UDim2.new(1, 0, 1, 0)
+	page.BackgroundTransparency = 1
+	page.Visible = false
+	local layout = Instance.new("UIListLayout", page)
+	layout.Padding = UDim.new(0, 10)
+	local pad = Instance.new("UIPadding", page)
+	pad.PaddingTop = UDim.new(0, 2)
+	TabPages[name] = page
+	return page
+end
+
+local function SwitchTab(name)
+	for _, b in pairs(TabButtons) do
+		b.stroke.Transparency = 1
+		b.frame.BackgroundColor3 = Theme.Panel
+	end
+	for _, p in pairs(TabPages) do
+		p.Visible = false
+	end
+	TabButtons[name].stroke.Transparency = 0
+	TabButtons[name].frame.BackgroundColor3 = Theme.Button
+	TabPages[name].Visible = true
+end
+
+local function MakeTab(name, x)
+	local frame = Instance.new("Frame", Tabs)
+	frame.Size = UDim2.new(0, 78, 0, 28)
+	frame.Position = UDim2.new(0, x, 0, 2)
+	frame.BackgroundColor3 = Theme.Panel
+	frame.BorderSizePixel = 0
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(1, 0)
+
+	local stroke = Instance.new("UIStroke", frame)
+	stroke.Color = Theme.Accent
+	stroke.Transparency = 1
+
+	local label = Instance.new("TextLabel", frame)
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = name
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 12
+	label.TextColor3 = Theme.Text
+
+	local click = Instance.new("TextButton", frame)
+	click.Size = UDim2.new(1, 0, 1, 0)
+	click.BackgroundTransparency = 1
+	click.Text = ""
+	connect(click.MouseButton1Click, function() SwitchTab(name) end)
+
+	TabButtons[name] = { frame = frame, stroke = stroke }
+	CreatePage(name)
+end
+
+MakeTab("Main", 0)
+MakeTab("Visuals", 84)
+MakeTab("Settings", 168)
+MakeTab("Client", 252)
+SwitchTab("Main")
+
+--==================================================
+-- UI Elements
+--==================================================
+
+local function Section(parent, text)
+	local l = Instance.new("TextLabel", parent)
+	l.Size = UDim2.new(1, 0, 0, 16)
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.Font = Enum.Font.GothamBold
+	l.TextSize = 12
+	l.TextColor3 = Theme.Accent
+	l.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+local function Toggle(parent, text, default, callback)
+	local b = Instance.new("TextButton", parent)
+	b.Size = UDim2.new(1, 0, 0, 32)
+	b.BackgroundColor3 = Theme.Button
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 13
+	b.TextColor3 = Theme.Text
+	b.BorderSizePixel = 0
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+
+	local state = default
+	local function render()
+		b.Text = text .. " : " .. (state and "ON" or "OFF")
+	end
+	render()
+
+	connect(b.MouseButton1Click, function()
+		state = not state
+		render()
+		callback(state)
+	end)
+end
+
+local function Slider(parent, text, min, max, default, callback)
+	local h = Instance.new("Frame", parent)
+	h.Size = UDim2.new(1, 0, 0, 50)
+	h.BackgroundTransparency = 1
+
+	local l = Instance.new("TextLabel", h)
+	l.Size = UDim2.new(1, 0, 0, 18)
+	l.BackgroundTransparency = 1
+	l.Text = text .. ": " .. tostring(default)
+	l.Font = Enum.Font.Gotham
+	l.TextSize = 12
+	l.TextColor3 = Theme.Text
+	l.TextXAlignment = Enum.TextXAlignment.Left
+
+	local bar = Instance.new("Frame", h)
+	bar.Position = UDim2.new(0, 0, 0, 28)
+	bar.Size = UDim2.new(1, 0, 0, 8)
+	bar.BackgroundColor3 = Theme.Bar
+	bar.BorderSizePixel = 0
+	Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+	local fill = Instance.new("Frame", bar)
+	fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+	fill.BackgroundColor3 = Theme.Accent
+	fill.BorderSizePixel = 0
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local dragging = false
+	connect(bar.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+	end)
+	connect(UIS.InputEnded, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+	end)
+
+	connect(RunService.RenderStepped, function()
+		if Unloaded or not dragging then return end
+		local pct = math.clamp((UIS:GetMouseLocation().X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		fill.Size = UDim2.new(pct, 0, 1, 0)
+		local val = math.floor(min + (max - min) * pct)
+		l.Text = text .. ": " .. tostring(val)
+		callback(val)
+	end)
+end
+
+local function Cycle(parent, text, options, defaultIndex, callback)
+	local b = Instance.new("TextButton", parent)
+	b.Size = UDim2.new(1, 0, 0, 32)
+	b.BackgroundColor3 = Theme.Button
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 13
+	b.TextColor3 = Theme.Text
+	b.BorderSizePixel = 0
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+
+	local idx = defaultIndex
+	local function render()
+		b.Text = text .. " : " .. options[idx]
+	end
+	render()
+	callback(idx)
+
+	connect(b.MouseButton1Click, function()
+		idx = (idx % #options) + 1
+		render()
+		callback(idx)
+	end)
+end
+
+local function ActionButton(parent, text, callback)
+	local b = Instance.new("TextButton", parent)
+	b.Size = UDim2.new(1, 0, 0, 32)
+	b.BackgroundColor3 = Theme.Button
+	b.Text = text
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 13
+	b.TextColor3 = Theme.Text
+	b.BorderSizePixel = 0
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+	connect(b.MouseButton1Click, callback)
+end
+
+--==================================================
+-- Main Tab
+--==================================================
+
+Section(TabPages.Main, "AIM")
+Slider(TabPages.Main, "Aim FOV", 40, 300, AimFOV, function(v) AimFOV = v end)
+Slider(TabPages.Main, "Aim Strength", 1, 10, AimStrength, function(v) AimStrength = v end)
+Slider(TabPages.Main, "Prediction", 0, 30, 0, function(v) Prediction = v / 100 end)
+Cycle(TabPages.Main, "Aim Part", AimPartOptions, AimPartIndex, function(i) AimPartIndex = i end)
+Toggle(TabPages.Main, "Visible Check", false, function(v) VisibleCheck = v end)
+
+--==================================================
+-- Visuals Tab
+--==================================================
+
+Section(TabPages.Visuals, "ESP")
+Toggle(TabPages.Visuals, "Bone ESP", false, function(v)
+	BoneESPEnabled = v
+	if not v then
+		for _, lines in pairs(BoneLines) do
+			for _, l in pairs(lines) do l:Remove() end
+		end
+		BoneLines = {}
+	end
+end)
+Toggle(TabPages.Visuals, "Tracers", false, function(v)
+	TracersEnabled = v
+	if not v then
+		for _, l in pairs(TracerLines) do l:Remove() end
+		TracerLines = {}
+	end
+end)
+
+--==================================================
+-- Settings Tab
+--==================================================
+
+Section(TabPages.Settings, "PLAYER")
+Slider(TabPages.Settings, "WalkSpeed", 16, 200, WalkSpeed, function(v) WalkSpeed = v end)
+Slider(TabPages.Settings, "Jump Power", 25, 200, JumpPower, function(v) JumpPower = v end)
+Slider(TabPages.Settings, "Camera FOV", 40, 120, CameraFOV, function(v) CameraFOV = v end)
+
+Section(TabPages.Settings, "CFRAME MOVEMENT")
+Toggle(TabPages.Settings, "CFrame Move", false, function(v) CFrameMoveEnabled = v end)
+Slider(TabPages.Settings, "CFrame WalkSpeed", 8, 120, CFrameWalkSpeed, function(v) CFrameWalkSpeed = v end)
+Slider(TabPages.Settings, "CFrame JumpSpeed", 4, 80, CFrameJumpSpeed, function(v) CFrameJumpSpeed = v end)
+
+--==================================================
+-- Client Tab
+--==================================================
+
+local function isClientConnected()
+	local okDrawing = (Drawing ~= nil)
+	return okDrawing and LocalPlayer ~= nil
+end
+
+Section(TabPages.Client, "CLIENT")
+
+local Card = Instance.new("Frame", TabPages.Client)
+Card.Size = UDim2.new(1, 0, 0, 192)
+Card.BackgroundColor3 = Theme.Panel
+Card.BorderSizePixel = 0
+Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 12)
+
+local Avatar = Instance.new("ImageLabel", Card)
+Avatar.Size = UDim2.new(0, 64, 0, 64)
+Avatar.Position = UDim2.new(0, 12, 0, 12)
+Avatar.BackgroundColor3 = Theme.Button
+Avatar.BorderSizePixel = 0
+Instance.new("UICorner", Avatar).CornerRadius = UDim.new(1, 0)
+
+local NameLabel = Instance.new("TextLabel", Card)
+NameLabel.Size = UDim2.new(1, -90, 0, 20)
+NameLabel.Position = UDim2.new(0, 86, 0, 12)
+NameLabel.BackgroundTransparency = 1
+NameLabel.Font = Enum.Font.GothamBold
+NameLabel.TextSize = 14
+NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+NameLabel.TextColor3 = Theme.Text
+
+local UsernameLabel = Instance.new("TextLabel", Card)
+UsernameLabel.Size = UDim2.new(1, -90, 0, 18)
+UsernameLabel.Position = UDim2.new(0, 86, 0, 34)
+UsernameLabel.BackgroundTransparency = 1
+UsernameLabel.Font = Enum.Font.Gotham
+UsernameLabel.TextSize = 12
+UsernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+UsernameLabel.TextColor3 = Theme.SubText
+
+local UserIdLabel = Instance.new("TextLabel", Card)
+UserIdLabel.Size = UDim2.new(1, -24, 0, 18)
+UserIdLabel.Position = UDim2.new(0, 12, 0, 86)
+UserIdLabel.BackgroundTransparency = 1
+UserIdLabel.Font = Enum.Font.Gotham
+UserIdLabel.TextSize = 12
+UserIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+UserIdLabel.TextColor3 = Theme.Text
+
+local StatusDot = Instance.new("Frame", Card)
+StatusDot.Size = UDim2.new(0, 10, 0, 10)
+StatusDot.Position = UDim2.new(0, 12, 0, 114)
+StatusDot.BorderSizePixel = 0
+Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+
+local StatusLabel = Instance.new("TextLabel", Card)
+StatusLabel.Size = UDim2.new(1, -28, 0, 18)
+StatusLabel.Position = UDim2.new(0, 28, 0, 110)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Font = Enum.Font.GothamBold
+StatusLabel.TextSize = 12
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ExperienceLabel = Instance.new("TextLabel", Card)
+ExperienceLabel.Size = UDim2.new(1, -24, 0, 18)
+ExperienceLabel.Position = UDim2.new(0, 12, 0, 134)
+ExperienceLabel.BackgroundTransparency = 1
+ExperienceLabel.Font = Enum.Font.Gotham
+ExperienceLabel.TextSize = 12
+ExperienceLabel.TextXAlignment = Enum.TextXAlignment.Left
+ExperienceLabel.TextColor3 = Theme.Text
+
+local PlaceIdLabel = Instance.new("TextLabel", Card)
+PlaceIdLabel.Size = UDim2.new(1, -24, 0, 16)
+PlaceIdLabel.Position = UDim2.new(0, 12, 0, 154)
+PlaceIdLabel.BackgroundTransparency = 1
+PlaceIdLabel.Font = Enum.Font.Gotham
+PlaceIdLabel.TextSize = 11
+PlaceIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+PlaceIdLabel.TextColor3 = Theme.SubText
+
+local JobIdLabel = Instance.new("TextLabel", Card)
+JobIdLabel.Size = UDim2.new(1, -24, 0, 16)
+JobIdLabel.Position = UDim2.new(0, 12, 0, 170)
+JobIdLabel.BackgroundTransparency = 1
+JobIdLabel.Font = Enum.Font.Gotham
+JobIdLabel.TextSize = 11
+JobIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+JobIdLabel.TextColor3 = Theme.SubText
+
+local function refreshClientCard()
+	NameLabel.Text = "Display Name: " .. (LocalPlayer.DisplayName or "Unknown")
+	UsernameLabel.Text = "Username: @" .. (LocalPlayer.Name or "Unknown")
+	UserIdLabel.Text = "User ID: " .. tostring(LocalPlayer.UserId or 0)
+
+	local connected = isClientConnected()
+	StatusDot.BackgroundColor3 = connected and Theme.Online or Theme.Offline
+	StatusLabel.TextColor3 = connected and Theme.Online or Theme.Offline
+	StatusLabel.Text = connected and "● Online" or "● Offline"
+
+	local ok, content = pcall(function()
+		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok and content then
+		Avatar.Image = content
+	end
+
+	local experienceName = game.Name or "Unknown"
+	local infoOk, info = pcall(function()
+		return MarketplaceService:GetProductInfo(game.PlaceId)
+	end)
+	if infoOk and info and info.Name then
+		experienceName = info.Name
+	end
+
+	ExperienceLabel.Text = "Experience: " .. experienceName
+	PlaceIdLabel.Text = "Place ID: " .. tostring(game.PlaceId)
+	local shortJob = tostring(game.JobId or "N/A")
+	if #shortJob > 28 then
+		shortJob = string.sub(shortJob, 1, 28) .. "..."
+	end
+	JobIdLabel.Text = "Server ID: " .. shortJob
+end
+
+refreshClientCard()
+ActionButton(TabPages.Client, "Refresh Client Status", refreshClientCard)
+
+--==================================================
+-- FOV Circle
+--==================================================
+
+local FOV = Instance.new("Frame", ScreenGui)
+FOV.AnchorPoint = Vector2.new(0.5, 0.5)
+FOV.BackgroundTransparency = 1
+FOV.Visible = false
+Instance.new("UICorner", FOV).CornerRadius = UDim.new(1, 0)
+
+local FStroke = Instance.new("UIStroke", FOV)
+FStroke.Color = Theme.Accent
+FStroke.Transparency = 0.35
+FStroke.Thickness = 1.5
+
+--==================================================
+-- Bone Maps
+--==================================================
+
+local BonesR15 = {
+	{ "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
+	{ "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
+	{ "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
+	{ "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
+	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
+}
+
+local BonesR6 = {
+	{ "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" }, { "Torso", "Left Leg" }, { "Torso", "Right Leg" },
+}
+
+--==================================================
+-- Runtime
+--==================================================
+
+connect(UIS.InputBegan, function(i, gp)
+	if gp then return end
+	if i.UserInputType == Enum.UserInputType.MouseButton2 then
+		ADS = true
+		FOV.Visible = true
+	end
+end)
+
+connect(UIS.InputEnded, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton2 then
+		ADS = false
+		FOV.Visible = false
+	end
+end)
+
+connect(RunService.RenderStepped, function(dt)
+	if Unloaded then return end
+
+	local char = LocalPlayer.Character
+	if char and char:FindFirstChildOfClass("Humanoid") then
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum.WalkSpeed ~= WalkSpeed then hum.WalkSpeed = WalkSpeed end
+		if hum.JumpPower ~= JumpPower then hum.JumpPower = JumpPower end
+	end
+	if Camera.FieldOfView ~= CameraFOV then
+		Camera.FieldOfView = CameraFOV
+	end
+
+	-- CFrame movement
+	if CFrameMoveEnabled and char and char:FindFirstChild("HumanoidRootPart") then
+		local hrp = char.HumanoidRootPart
+		local move = Vector3.zero
+		if UIS:IsKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
+		if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, 1, 0) * CFrameJumpSpeed end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0, 1, 0) * CFrameJumpSpeed end
+		if move.Magnitude > 0 then
+			hrp.CFrame = hrp.CFrame + move.Unit * CFrameWalkSpeed * dt
+		end
+	end
+
+	-- FOV circle
+	local center = Camera.ViewportSize / 2
+	FOV.Size = UDim2.fromOffset(AimFOV * 2, AimFOV * 2)
+	FOV.Position = UDim2.fromOffset(center.X, center.Y)
+
+	-- Aimbot
+	local target = getTarget()
+	if ADS and target then
+		local targetCF = CFrame.new(Camera.CFrame.Position, getAimPoint(target))
+		Camera.CFrame = Camera.CFrame:Lerp(targetCF, math.clamp(AimStrength / 10, 0.1, 1))
+	end
+
+	-- Bone ESP + Tracers
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and p.Team ~= LocalPlayer.Team then
+			local enemyChar = p.Character
+			local hum = enemyChar:FindFirstChildOfClass("Humanoid")
+			local root = enemyChar:FindFirstChild("HumanoidRootPart")
+
+			if BoneESPEnabled and hum then
+				local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
+				BoneLines[p] = BoneLines[p] or {}
+				for i, pair in ipairs(rig) do
+					local a = enemyChar:FindFirstChild(pair[1])
+					local b = enemyChar:FindFirstChild(pair[2])
+					if a and b then
+						local ap, av = Camera:WorldToViewportPoint(a.Position)
+						local bp, bv = Camera:WorldToViewportPoint(b.Position)
+						local line = BoneLines[p][i] or newDrawingLine(2.2)
+						BoneLines[p][i] = line
+						if line then
+							line.Color = Theme.Accent
+							if av and bv then
+								line.From = Vector2.new(ap.X, ap.Y)
+								line.To = Vector2.new(bp.X, bp.Y)
+								line.Visible = true
+							else
+								line.Visible = false
+							end
+						end
+					end
+				end
+			elseif BoneLines[p] then
+				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
+			end
+
+			if TracersEnabled and root then
+				local pos, vis = Camera:WorldToViewportPoint(root.Position)
+				TracerLines[p] = TracerLines[p] or newDrawingLine(1.6)
+				local tr = TracerLines[p]
+				if tr then
+					tr.Color = Theme.Accent
+					if vis then
+						tr.From = Vector2.new(center.X, Camera.ViewportSize.Y - 4)
+						tr.To = Vector2.new(pos.X, pos.Y)
+						tr.Visible = true
+					else
+						tr.Visible = false
+					end
+				end
+			elseif TracerLines[p] then
+				TracerLines[p].Visible = false
+			end
+		else
+			if BoneLines[p] then
+				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
+			end
+			if TracerLines[p] then TracerLines[p].Visible = false end
+		end
+	end
+end)
+
+connect(Players.PlayerRemoving, function(p)
+	if BoneLines[p] then
+		for _, l in pairs(BoneLines[p]) do if l then l:Remove() end end
+		BoneLines[p] = nil
+	end
+	if TracerLines[p] then
+		TracerLines[p]:Remove()
+		TracerLines[p] = nil
+	end
+end)
+
+--==================================================
+-- Drag / Minimize / Close
+--==================================================
+
+local dragging, dragStart, startPos
+connect(Header.InputBegan, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = i.Position
+		startPos = Main.Position
+	end
+end)
+connect(UIS.InputEnded, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+end)
+connect(UIS.InputChanged, function(i)
+	if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+		local d = i.Position - dragStart
+		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+	end
+end)
+
+local minimized = false
+local full = Main.Size
+local collapsed = UDim2.new(full.X.Scale, full.X.Offset, 0, Header.Size.Y.Offset)
+
+connect(Minimize.MouseButton1Click, function()
+	minimized = not minimized
+	if minimized then
+		Body.Visible = false
+		tween(Main, { Size = collapsed }, 0.16)
+	else
+		tween(Main, { Size = full }, 0.16)
+		task.delay(0.16, function()
+			if not Unloaded then Body.Visible = true end
+		end)
+	end
+end)
+
+local function unload()
+	if Unloaded then return end
+	Unloaded = true
+	clearAllDrawings()
+	disconnectAll()
+	ScreenGui:Destroy()
+end
+
+connect(Close.MouseButton1Click, unload)
