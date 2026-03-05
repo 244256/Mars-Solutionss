@@ -2628,40 +2628,19 @@ connect(RunService.RenderStepped, function(dt)
             if now - lastTriggerFire >= TriggerbotDelay then
                 lastTriggerFire = now
                 -- Try every known executor input method in order
-                local fired = false
-                if not fired and typeof(mouse1click) == "function" then
-                    pcall(mouse1click); fired = true
-                end
-                if not fired and typeof(mousemoverel) == "function" and typeof(mouse1press) == "function" then
+                if typeof(mouse1click) == "function" then
+                    pcall(mouse1click)
+                elseif typeof(mouse1press) == "function" then
                     pcall(mouse1press)
                     task.delay(math.max(0.04, TriggerbotDelay * 0.5), function()
                         pcall(function()
                             if typeof(mouse1release) == "function" then mouse1release() end
                         end)
                     end)
-                    fired = true
-                end
-                if not fired then
-                    -- UIS simulation fallback (works in some executors)
-                    pcall(function()
-                        local vInput = Instance.new("InputObject")
-                        vInput.UserInputType = Enum.UserInputType.MouseButton1
-                        vInput.UserInputState = Enum.UserInputState.Begin
-                        UIS:SimulateInput(vInput)
-                        task.delay(0.05, function()
-                            pcall(function()
-                                local vInput2 = Instance.new("InputObject")
-                                vInput2.UserInputType = Enum.UserInputType.MouseButton1
-                                vInput2.UserInputState = Enum.UserInputState.End
-                                UIS:SimulateInput(vInput2)
-                            end)
-                        end)
-                    end)
                 end
             end
         end
     end
-        local tTgt, _ = getCrosshairTarget()
     -- Target Info Card
     if AimTargetInfoEnabled and ADS and target and targetPlayer then
         local tChar = targetPlayer.Character
