@@ -1,8 +1,8 @@
 --==================================================
 -- Mars Solutions | UI v5 + SNAP AIM + ESP + CLIENT
--- v5 - Session Stats, Full Client Card, Name/Distance ESP, Health Bar ESP
+-- v4 - Distance Slider, Triggerbot, Draggable HUD
 --==================================================
-if not game:IsLoaded() then game.Loaded:Wait() end
+
 --// Services
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -13,82 +13,6 @@ local Stats = game:GetService("Stats")
 local Camera = workspace.CurrentCamera
 
 local LocalPlayer = Players.LocalPlayer
-
---==================================================
--- Session Stats (tracked from inject time)
---==================================================
-
-local SessionStart  = os.time()
-local SessionKills  = 0
-local SessionDeaths = 0
-local KilledPlayers = {} -- debounce so one death = one kill
-
-local function onEnemyDied(player)
-	if KilledPlayers[player] then return end
-	KilledPlayers[player] = true
-	SessionKills = SessionKills + 1
-	task.delay(2, function() KilledPlayers[player] = nil end)
-end
-
-local function onLocalDied()
-	SessionDeaths = SessionDeaths + 1
-end
-
-local function hookCharacterDeaths(char, player)
-	local hum = char:WaitForChild("Humanoid", 5)
-	if not hum then return end
-	if player == LocalPlayer then
-		hum.Died:Connect(onLocalDied)
-	else
-		hum.Died:Connect(function() onEnemyDied(player) end)
-	end
-end
-
-local function hookPlayer(p)
-	if p.Character then
-		task.spawn(hookCharacterDeaths, p.Character, p)
-	end
-	p.CharacterAdded:Connect(function(char)
-		task.spawn(hookCharacterDeaths, char, p)
-	end)
-end
-
-for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
-Players.PlayerAdded:Connect(hookPlayer)
-
-local function formatSessionTime()
-	local elapsed = os.time() - SessionStart
-	local h = math.floor(elapsed / 3600)
-	local m = math.floor((elapsed % 3600) / 60)
-	local s = elapsed % 60
-	if h > 0 then
-		return string.format("%dh %dm %ds", h, m, s)
-	elseif m > 0 then
-		return string.format("%dm %ds", m, s)
-	else
-		return string.format("%ds", s)
-	end
-end
-
-local function getKD()
-	if SessionDeaths == 0 then
-		return SessionKills == 0 and "0.00" or tostring(SessionKills) .. ".00"
-	end
-	return string.format("%.2f", SessionKills / SessionDeaths)
-end
-
-local function getAccountAge()
-	local days = LocalPlayer.AccountAge
-	local years  = math.floor(days / 365)
-	local months = math.floor((days % 365) / 30)
-	if years > 0 then
-		return string.format("%dy %dm", years, months)
-	elseif months > 0 then
-		return string.format("%dm (%dd)", months, days)
-	else
-		return days .. " days"
-	end
-end
 
 --==================================================
 -- State
@@ -116,24 +40,19 @@ local CFrameMoveEnabled = false
 local CFrameWalkSpeed = 24
 local CFrameJumpSpeed = 18
 
-local BoneESPEnabled     = false
-local TracersEnabled     = false
-local BoxESPEnabled      = false
-local NameESPEnabled     = false
-local HealthBarESPEnabled = false
+local BoneESPEnabled = false
+local TracersEnabled = false
+local BoxESPEnabled = false
 local AimTargetInfoEnabled = false
-local RadarEnabled       = false
+local RadarEnabled = false
 
-local BoneLines      = {}
-local TracerLines    = {}
-local BoxLines       = {}
-local NameLabels     = {}
-local HealthBarBGs   = {}
-local HealthBarFills = {}
+local BoneLines = {}
+local TracerLines = {}
+local BoxLines = {}
 
-local AimPartOptions  = { "Head", "UpperTorso", "HumanoidRootPart" }
+local AimPartOptions = { "Head", "UpperTorso", "HumanoidRootPart" }
 local AimMethodOptions = { "Camera", "Mouse" }
-local AimPartIndex  = 1
+local AimPartIndex = 1
 local AimMethodIndex = 1
 
 local Theme = {
@@ -175,7 +94,9 @@ local function tween(obj, props, t)
 end
 
 local function disconnectAll()
-	for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
+	for _, c in ipairs(Connections) do
+		pcall(function() c:Disconnect() end)
+	end
 	table.clear(Connections)
 end
 
@@ -187,15 +108,9 @@ local function clearAllDrawings()
 	for _, lines in pairs(BoxLines) do
 		for _, l in pairs(lines) do pcall(function() l:Remove() end) end
 	end
-	for _, l in pairs(NameLabels) do pcall(function() l:Remove() end) end
-	for _, l in pairs(HealthBarBGs) do pcall(function() l:Remove() end) end
-	for _, l in pairs(HealthBarFills) do pcall(function() l:Remove() end) end
 	BoneLines = {}
 	TracerLines = {}
 	BoxLines = {}
-	NameLabels = {}
-	HealthBarBGs = {}
-	HealthBarFills = {}
 end
 
 local function flushPlayerLines(p)
@@ -210,18 +125,6 @@ local function flushPlayerLines(p)
 	if BoxLines[p] then
 		for _, l in pairs(BoxLines[p]) do pcall(function() l:Remove() end) end
 		BoxLines[p] = nil
-	end
-	if NameLabels[p] then
-		pcall(function() NameLabels[p]:Remove() end)
-		NameLabels[p] = nil
-	end
-	if HealthBarBGs[p] then
-		pcall(function() HealthBarBGs[p]:Remove() end)
-		HealthBarBGs[p] = nil
-	end
-	if HealthBarFills[p] then
-		pcall(function() HealthBarFills[p]:Remove() end)
-		HealthBarFills[p] = nil
 	end
 end
 
@@ -239,26 +142,6 @@ local function newDrawingLine(thickness)
 	l.Transparency = 1
 	l.Visible = false
 	return l
-end
-
-local function newDrawingText()
-	if not Drawing then return nil end
-	local t = Drawing.new("Text")
-	t.Size = 13
-	t.Font = Drawing.Fonts.UI
-	t.Color = Color3.fromRGB(255, 255, 255)
-	t.Outline = true
-	t.OutlineColor = Color3.fromRGB(0, 0, 0)
-	t.Visible = false
-	return t
-end
-
-local function newDrawingRect(filled)
-	if not Drawing then return nil end
-	local r = Drawing.new("Square")
-	r.Filled = filled or false
-	r.Visible = false
-	return r
 end
 
 local function getAimPart(character)
@@ -318,36 +201,19 @@ local function isEnemy(p)
 	return myTeam ~= theirTeam
 end
 
-local function healthToColor(pct)
-	-- Green at 100%, yellow at 50%, red at 0%
-	if pct >= 0.5 then
-		local t = (pct - 0.5) * 2
-		return Color3.fromRGB(
-			math.floor(255 * (1 - t)),
-			220,
-			math.floor(60 * (1 - t))
-		)
-	else
-		local t = pct * 2
-		return Color3.fromRGB(230, math.floor(220 * t), 0)
-	end
-end
-
-local function distanceColor(dist)
-	local pct = 1 - math.clamp(dist / AimMaxDistance, 0, 1)
-	return healthToColor(pct)
-end
-
 local function getTarget()
 	local center = Camera.ViewportSize / 2
 	local best, bestPlayer, bestDist = nil, nil, AimFOV
+
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and isEnemy(p) then
 			local part = getAimPart(p.Character)
 			if part and isVisible(part) then
+				-- Distance check
 				local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 				if myRoot then
-					if (part.Position - myRoot.Position).Magnitude > AimMaxDistance then continue end
+					local worldDist = (part.Position - myRoot.Position).Magnitude
+					if worldDist > AimMaxDistance then continue end
 				end
 				local pos, vis = Camera:WorldToViewportPoint(getAimPoint(part))
 				if vis then
@@ -361,9 +227,11 @@ local function getTarget()
 			end
 		end
 	end
+
 	return best, bestPlayer
 end
 
+-- Returns the enemy part currently under the crosshair within threshold pixels
 local function getCrosshairTarget()
 	local center = Camera.ViewportSize / 2
 	for _, p in ipairs(Players:GetPlayers()) do
@@ -372,12 +240,15 @@ local function getCrosshairTarget()
 			if part and isVisible(part) then
 				local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 				if myRoot then
-					if (part.Position - myRoot.Position).Magnitude > AimMaxDistance then continue end
+					local worldDist = (part.Position - myRoot.Position).Magnitude
+					if worldDist > AimMaxDistance then continue end
 				end
 				local pos, vis = Camera:WorldToViewportPoint(part.Position)
 				if vis then
 					local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
-					if dist <= TriggerbotThreshold then return part, p end
+					if dist <= TriggerbotThreshold then
+						return part, p
+					end
 				end
 			end
 		end
@@ -393,18 +264,7 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MarsSolutionsUI"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ResetOnSpawn = false
-local function getUIParent()
-    if typeof(gethui) == "function" then
-        return gethui()
-    end
-    local ok, result = pcall(function()
-        return game:GetService("CoreGui")
-    end)
-    if ok then return result end
-    return LocalPlayer.PlayerGui
-end
-
-ScreenGui.Parent = getUIParent()
+ScreenGui.Parent = game:GetService("CoreGui")
 
 --==================================================
 -- Notification System
@@ -478,15 +338,16 @@ local function Notify(title, message, duration)
 	tween(msgLabel,   { TextTransparency = 0 },         0.2)
 
 	task.delay(duration, function()
-		if not (card and card.Parent) then return end
-		tween(card,       { BackgroundTransparency = 1 }, 0.3)
-		tween(stroke,     { Transparency = 1 },           0.3)
-		tween(accent,     { BackgroundTransparency = 1 }, 0.3)
-		tween(titleLabel, { TextTransparency = 1 },       0.3)
-		tween(msgLabel,   { TextTransparency = 1 },       0.3)
-		task.delay(0.35, function()
-			if card and card.Parent then card:Destroy() end
-		end)
+		if card and card.Parent then
+			tween(card,       { BackgroundTransparency = 1 }, 0.3)
+			tween(stroke,     { Transparency = 1 },           0.3)
+			tween(accent,     { BackgroundTransparency = 1 }, 0.3)
+			tween(titleLabel, { TextTransparency = 1 },       0.3)
+			tween(msgLabel,   { TextTransparency = 1 },       0.3)
+			task.delay(0.35, function()
+				if card and card.Parent then card:Destroy() end
+			end)
+		end
 	end)
 end
 
@@ -560,6 +421,8 @@ end
 
 --==================================================
 -- Draggable HUD
+-- Shows FPS, ping, region, player avatar, name, username
+-- Tiny, always on top, draggable anywhere on screen
 --==================================================
 
 local HUD = Instance.new("Frame", ScreenGui)
@@ -575,6 +438,7 @@ HUDStroke.Color = Theme.Accent
 HUDStroke.Thickness = 1
 HUDStroke.Transparency = 0.5
 
+-- Accent left bar
 local HUDAccent = Instance.new("Frame", HUD)
 HUDAccent.Size = UDim2.new(0, 3, 1, -12)
 HUDAccent.Position = UDim2.fromOffset(6, 6)
@@ -582,6 +446,7 @@ HUDAccent.BackgroundColor3 = Theme.Accent
 HUDAccent.BorderSizePixel = 0
 Instance.new("UICorner", HUDAccent).CornerRadius = UDim.new(1, 0)
 
+-- Avatar
 local HUDAvatar = Instance.new("ImageLabel", HUD)
 HUDAvatar.Size = UDim2.fromOffset(36, 36)
 HUDAvatar.Position = UDim2.fromOffset(14, 9)
@@ -589,6 +454,7 @@ HUDAvatar.BackgroundColor3 = Theme.Panel
 HUDAvatar.BorderSizePixel = 0
 Instance.new("UICorner", HUDAvatar).CornerRadius = UDim.new(1, 0)
 
+-- Display name
 local HUDName = Instance.new("TextLabel", HUD)
 HUDName.Size = UDim2.new(0, 98, 0, 16)
 HUDName.Position = UDim2.fromOffset(56, 7)
@@ -600,6 +466,7 @@ HUDName.TextXAlignment = Enum.TextXAlignment.Left
 HUDName.TextTruncate = Enum.TextTruncate.AtEnd
 HUDName.Text = LocalPlayer.DisplayName or "..."
 
+-- Username
 local HUDUser = Instance.new("TextLabel", HUD)
 HUDUser.Size = UDim2.new(0, 98, 0, 13)
 HUDUser.Position = UDim2.fromOffset(56, 23)
@@ -611,6 +478,7 @@ HUDUser.TextXAlignment = Enum.TextXAlignment.Left
 HUDUser.TextTruncate = Enum.TextTruncate.AtEnd
 HUDUser.Text = "@" .. (LocalPlayer.Name or "...")
 
+-- Stats row: FPS | PING | REGION
 local HUDStats = Instance.new("TextLabel", HUD)
 HUDStats.Size = UDim2.new(0, 98, 0, 12)
 HUDStats.Position = UDim2.fromOffset(56, 38)
@@ -619,8 +487,9 @@ HUDStats.Font = Enum.Font.Gotham
 HUDStats.TextSize = 10
 HUDStats.TextColor3 = Theme.SubText
 HUDStats.TextXAlignment = Enum.TextXAlignment.Left
-HUDStats.Text = "K/D: -- | T: --"
+HUDStats.Text = "FPS: -- | PING: --"
 
+-- Right side mini stats column
 local HUDFpsLabel = Instance.new("TextLabel", HUD)
 HUDFpsLabel.Size = UDim2.fromOffset(56, 14)
 HUDFpsLabel.Position = UDim2.fromOffset(152, 8)
@@ -650,13 +519,18 @@ HUDPlayersLabel.TextXAlignment = Enum.TextXAlignment.Right
 HUDPlayersLabel.TextColor3 = Theme.SubText
 HUDPlayersLabel.Text = "-- plrs"
 
+-- Load avatar
 task.spawn(function()
 	local ok, img = pcall(function()
-		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+		return Players:GetUserThumbnailAsync(
+			LocalPlayer.UserId,
+			Enum.ThumbnailType.HeadShot,
+			Enum.ThumbnailSize.Size100x100)
 	end)
 	if ok and img then HUDAvatar.Image = img end
 end)
 
+-- HUD drag
 local hudDragging, hudDragStart, hudStartPos = false, nil, nil
 connect(HUD.InputBegan, function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -678,9 +552,10 @@ connect(UIS.InputChanged, function(i)
 	end
 end)
 
+-- FPS rolling average
 local fpsBuffer = {}
 local fpsBufferSize = 30
-local lastHUDUpdate = 0
+local lastFpsUpdate = 0
 
 local function getFPSColor(fps)
 	if fps >= 55 then return Theme.HUDGood
@@ -859,7 +734,9 @@ local function SwitchTab(name)
 		b.stroke.Transparency = 1
 		b.frame.BackgroundColor3 = Theme.Panel
 	end
-	for _, p in pairs(TabPages) do p.Visible = false end
+	for _, p in pairs(TabPages) do
+		p.Visible = false
+	end
 	TabButtons[name].stroke.Transparency = 0
 	TabButtons[name].frame.BackgroundColor3 = Theme.Button
 	TabPages[name].Visible = true
@@ -939,7 +816,10 @@ local function Toggle(parent, text, default, callback)
 		callback(state)
 	end)
 
-	return function(v) state = v; render() end
+	return function(v)
+		state = v
+		render()
+	end
 end
 
 local function Slider(parent, text, min, max, default, callback)
@@ -999,7 +879,9 @@ local function Cycle(parent, text, options, defaultIndex, callback)
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
 
 	local idx = defaultIndex
-	local function render() b.Text = text .. " : " .. options[idx] end
+	local function render()
+		b.Text = text .. " : " .. options[idx]
+	end
 	render()
 	callback(idx)
 
@@ -1024,32 +906,6 @@ local function ActionButton(parent, text, callback)
 	return b
 end
 
--- Small info row inside a card (label: value)
-local function InfoRow(parent, yOffset, labelText, valueText, valueColor)
-	local label = Instance.new("TextLabel", parent)
-	label.Size = UDim2.new(0.45, 0, 0, 16)
-	label.Position = UDim2.fromOffset(12, yOffset)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.Gotham
-	label.TextSize = 11
-	label.TextColor3 = Theme.SubText
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Text = labelText
-
-	local value = Instance.new("TextLabel", parent)
-	value.Size = UDim2.new(0.52, 0, 0, 16)
-	value.Position = UDim2.new(0.46, 0, 0, yOffset)
-	value.BackgroundTransparency = 1
-	value.Font = Enum.Font.GothamBold
-	value.TextSize = 11
-	value.TextColor3 = valueColor or Theme.Text
-	value.TextXAlignment = Enum.TextXAlignment.Right
-	value.Text = valueText
-	value.ClipsDescendants = false
-
-	return label, value
-end
-
 --==================================================
 -- Main Tab
 --==================================================
@@ -1059,10 +915,10 @@ Toggle(TabPages.Main, "Aimbot", false, function(v)
 	AimbotEnabled = v
 	Notify("Aimbot", v and "Aimbot enabled" or "Aimbot disabled")
 end)
-Slider(TabPages.Main, "Aim FOV",          40,  300, AimFOV,         function(v) AimFOV = v end)
-Slider(TabPages.Main, "Aim Strength",      1,   10, AimStrength,    function(v) AimStrength = v end)
+Slider(TabPages.Main, "Aim FOV",         40,  300, AimFOV,          function(v) AimFOV = v end)
+Slider(TabPages.Main, "Aim Strength",     1,   10, AimStrength,     function(v) AimStrength = v end)
 Slider(TabPages.Main, "Aim Max Distance", 50, 2000, AimMaxDistance, function(v) AimMaxDistance = v end)
-Slider(TabPages.Main, "Prediction",        0,   30, 0,              function(v) Prediction = v / 100 end)
+Slider(TabPages.Main, "Prediction",       0,   30, 0,               function(v) Prediction = v / 100 end)
 Cycle( TabPages.Main, "Aim Part",   AimPartOptions,   AimPartIndex,   function(i) AimPartIndex = i end)
 Cycle( TabPages.Main, "Aim Method", AimMethodOptions, AimMethodIndex, function(i) AimMethodIndex = i end)
 Toggle(TabPages.Main, "Visible Check", false, function(v)
@@ -1079,10 +935,10 @@ end)
 Section(TabPages.Main, "TRIGGERBOT")
 Toggle(TabPages.Main, "Triggerbot", false, function(v)
 	TriggerbotEnabled = v
-	Notify("Triggerbot", v and "Triggerbot enabled" or "Triggerbot disabled")
+	Notify("Triggerbot", v and "Triggerbot enabled — shoots when crosshair is on target" or "Triggerbot disabled")
 end)
-Slider(TabPages.Main, "Trigger Delay ms",     0, 500, 50, function(v) TriggerbotDelay = v / 1000 end)
-Slider(TabPages.Main, "Trigger Threshold px", 2,  60, 12, function(v) TriggerbotThreshold = v end)
+Slider(TabPages.Main, "Trigger Delay ms",     0,  500, 50,  function(v) TriggerbotDelay = v / 1000 end)
+Slider(TabPages.Main, "Trigger Threshold px", 2,   60, 12,  function(v) TriggerbotThreshold = v end)
 
 --==================================================
 -- Visuals Tab
@@ -1112,24 +968,6 @@ Toggle(TabPages.Visuals, "Box ESP", false, function(v)
 		BoxLines = {}
 	end
 	Notify("ESP", v and "Box ESP on" or "Box ESP off")
-end)
-Toggle(TabPages.Visuals, "Name + Distance ESP", false, function(v)
-	NameESPEnabled = v
-	if not v then
-		for _, l in pairs(NameLabels) do if l then l:Remove() end end
-		NameLabels = {}
-	end
-	Notify("ESP", v and "Name ESP on" or "Name ESP off")
-end)
-Toggle(TabPages.Visuals, "Health Bar ESP", false, function(v)
-	HealthBarESPEnabled = v
-	if not v then
-		for _, l in pairs(HealthBarBGs)   do if l then l:Remove() end end
-		for _, l in pairs(HealthBarFills) do if l then l:Remove() end end
-		HealthBarBGs   = {}
-		HealthBarFills = {}
-	end
-	Notify("ESP", v and "Health bars on" or "Health bars off")
 end)
 Toggle(TabPages.Visuals, "Aim Target Info", false, function(v)
 	AimTargetInfoEnabled = v
@@ -1163,7 +1001,6 @@ Slider(TabPages.Settings, "CFrame JumpSpeed",  4,  80, CFrameJumpSpeed, function
 
 --==================================================
 -- Client Tab
--- Expanded card + Session Stats card + Server Info card
 --==================================================
 
 local function isClientConnected()
@@ -1172,10 +1009,9 @@ end
 
 Section(TabPages.Client, "CLIENT")
 
--- Main player card (expanded)
 local Card = Instance.new("Frame", TabPages.Client)
 Card.LayoutOrder = 1
-Card.Size = UDim2.new(1, 0, 0, 236)
+Card.Size = UDim2.new(1, 0, 0, 192)
 Card.BackgroundColor3 = Theme.Panel
 Card.BorderSizePixel = 0
 Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 12)
@@ -1205,119 +1041,58 @@ UsernameLabel.TextSize = 12
 UsernameLabel.TextXAlignment = Enum.TextXAlignment.Left
 UsernameLabel.TextColor3 = Theme.SubText
 
--- Divider
-local CardDiv1 = Instance.new("Frame", Card)
-CardDiv1.Size = UDim2.new(1, -24, 0, 1)
-CardDiv1.Position = UDim2.fromOffset(12, 84)
-CardDiv1.BackgroundColor3 = Theme.Bar
-CardDiv1.BorderSizePixel = 0
+local UserIdLabel = Instance.new("TextLabel", Card)
+UserIdLabel.Size = UDim2.new(1, -24, 0, 18)
+UserIdLabel.Position = UDim2.new(0, 12, 0, 86)
+UserIdLabel.BackgroundTransparency = 1
+UserIdLabel.Font = Enum.Font.Gotham
+UserIdLabel.TextSize = 12
+UserIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+UserIdLabel.TextColor3 = Theme.Text
 
--- Status row
 local StatusDot = Instance.new("Frame", Card)
-StatusDot.Size = UDim2.new(0, 8, 0, 8)
-StatusDot.Position = UDim2.fromOffset(12, 96)
+StatusDot.Size = UDim2.new(0, 10, 0, 10)
+StatusDot.Position = UDim2.new(0, 12, 0, 114)
 StatusDot.BorderSizePixel = 0
 Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
 
 local StatusLabel = Instance.new("TextLabel", Card)
-StatusLabel.Size = UDim2.new(1, -28, 0, 16)
-StatusLabel.Position = UDim2.fromOffset(26, 92)
+StatusLabel.Size = UDim2.new(1, -28, 0, 18)
+StatusLabel.Position = UDim2.new(0, 28, 0, 110)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Font = Enum.Font.GothamBold
-StatusLabel.TextSize = 11
+StatusLabel.TextSize = 12
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Info rows
-local _, UserIdValue     = InfoRow(Card, 116, "User ID",      "...", Theme.Text)
-local _, AccountAgeValue = InfoRow(Card, 134, "Account Age",  getAccountAge(), Theme.SubText)
-local _, TeamValue       = InfoRow(Card, 152, "Team",         "None", Theme.SubText)
+local ExperienceLabel = Instance.new("TextLabel", Card)
+ExperienceLabel.Size = UDim2.new(1, -24, 0, 18)
+ExperienceLabel.Position = UDim2.new(0, 12, 0, 134)
+ExperienceLabel.BackgroundTransparency = 1
+ExperienceLabel.Font = Enum.Font.Gotham
+ExperienceLabel.TextSize = 12
+ExperienceLabel.TextXAlignment = Enum.TextXAlignment.Left
+ExperienceLabel.TextColor3 = Theme.Text
 
--- Divider
-local CardDiv2 = Instance.new("Frame", Card)
-CardDiv2.Size = UDim2.new(1, -24, 0, 1)
-CardDiv2.Position = UDim2.fromOffset(12, 174)
-CardDiv2.BackgroundColor3 = Theme.Bar
-CardDiv2.BorderSizePixel = 0
+local PlaceIdLabel = Instance.new("TextLabel", Card)
+PlaceIdLabel.Size = UDim2.new(1, -24, 0, 16)
+PlaceIdLabel.Position = UDim2.new(0, 12, 0, 154)
+PlaceIdLabel.BackgroundTransparency = 1
+PlaceIdLabel.Font = Enum.Font.Gotham
+PlaceIdLabel.TextSize = 11
+PlaceIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+PlaceIdLabel.TextColor3 = Theme.SubText
 
-local _, ExperienceValue = InfoRow(Card, 182, "Experience",   "...", Theme.Text)
-local _, PlaceIdValue    = InfoRow(Card, 200, "Place ID",     tostring(game.PlaceId), Theme.SubText)
-local _, ServerIdValue   = InfoRow(Card, 218, "Server ID",    "...", Theme.SubText)
+local JobIdLabel = Instance.new("TextLabel", Card)
+JobIdLabel.Size = UDim2.new(1, -24, 0, 16)
+JobIdLabel.Position = UDim2.new(0, 12, 0, 170)
+JobIdLabel.BackgroundTransparency = 1
+JobIdLabel.Font = Enum.Font.Gotham
+JobIdLabel.TextSize = 11
+JobIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+JobIdLabel.TextColor3 = Theme.SubText
 
--- Session Stats card
-local SessionCard = Instance.new("Frame", TabPages.Client)
-SessionCard.LayoutOrder = 2
-SessionCard.Size = UDim2.new(1, 0, 0, 136)
-SessionCard.BackgroundColor3 = Theme.Panel
-SessionCard.BorderSizePixel = 0
-Instance.new("UICorner", SessionCard).CornerRadius = UDim.new(0, 12)
-
-local SessionTitle = Instance.new("TextLabel", SessionCard)
-SessionTitle.Size = UDim2.new(1, -24, 0, 18)
-SessionTitle.Position = UDim2.fromOffset(12, 10)
-SessionTitle.BackgroundTransparency = 1
-SessionTitle.Font = Enum.Font.GothamBold
-SessionTitle.TextSize = 12
-SessionTitle.TextColor3 = Theme.Accent
-SessionTitle.TextXAlignment = Enum.TextXAlignment.Left
-SessionTitle.Text = "SESSION STATS"
-
-local SessionDiv = Instance.new("Frame", SessionCard)
-SessionDiv.Size = UDim2.new(1, -24, 0, 1)
-SessionDiv.Position = UDim2.fromOffset(12, 32)
-SessionDiv.BackgroundColor3 = Theme.Bar
-SessionDiv.BorderSizePixel = 0
-
-local _, SessionTimeValue   = InfoRow(SessionCard, 40,  "Time",    "0s",   Theme.Text)
-local _, SessionKillsValue  = InfoRow(SessionCard, 58,  "Kills",   "0",    Theme.HUDGood)
-local _, SessionDeathsValue = InfoRow(SessionCard, 76,  "Deaths",  "0",    Theme.HUDBad)
-local _, SessionKDValue     = InfoRow(SessionCard, 94,  "K/D",     "0.00", Theme.Text)
-local _, SessionFPSValue    = InfoRow(SessionCard, 112, "Avg FPS", "--",   Theme.SubText)
-
--- Server Info card
-local ServerCard = Instance.new("Frame", TabPages.Client)
-ServerCard.LayoutOrder = 3
-ServerCard.Size = UDim2.new(1, 0, 0, 118)
-ServerCard.BackgroundColor3 = Theme.Panel
-ServerCard.BorderSizePixel = 0
-Instance.new("UICorner", ServerCard).CornerRadius = UDim.new(0, 12)
-
-local ServerTitle = Instance.new("TextLabel", ServerCard)
-ServerTitle.Size = UDim2.new(1, -24, 0, 18)
-ServerTitle.Position = UDim2.fromOffset(12, 10)
-ServerTitle.BackgroundTransparency = 1
-ServerTitle.Font = Enum.Font.GothamBold
-ServerTitle.TextSize = 12
-ServerTitle.TextColor3 = Theme.Accent
-ServerTitle.TextXAlignment = Enum.TextXAlignment.Left
-ServerTitle.Text = "SERVER INFO"
-
-local ServerDiv = Instance.new("Frame", ServerCard)
-ServerDiv.Size = UDim2.new(1, -24, 0, 1)
-ServerDiv.Position = UDim2.fromOffset(12, 32)
-ServerDiv.BackgroundColor3 = Theme.Bar
-ServerDiv.BorderSizePixel = 0
-
-local _, ServerPlayersValue = InfoRow(ServerCard, 40, "Players",    "-- / --", Theme.Text)
-local _, ServerPingValue    = InfoRow(ServerCard, 58, "Ping",       "--ms",    Theme.SubText)
-local _, ServerAgeValue     = InfoRow(ServerCard, 76, "Server Age", "--",      Theme.SubText)
-
--- Player fill bar
-local FillBarBG = Instance.new("Frame", ServerCard)
-FillBarBG.Size = UDim2.new(1, -24, 0, 6)
-FillBarBG.Position = UDim2.fromOffset(12, 100)
-FillBarBG.BackgroundColor3 = Theme.Bar
-FillBarBG.BorderSizePixel = 0
-Instance.new("UICorner", FillBarBG).CornerRadius = UDim.new(1, 0)
-
-local FillBarFill = Instance.new("Frame", FillBarBG)
-FillBarFill.Size = UDim2.new(0, 0, 1, 0)
-FillBarFill.BackgroundColor3 = Theme.Accent
-FillBarFill.BorderSizePixel = 0
-Instance.new("UICorner", FillBarFill).CornerRadius = UDim.new(1, 0)
-
--- Players list
 local PlayersSection = Instance.new("TextLabel", TabPages.Client)
-PlayersSection.LayoutOrder = 4
+PlayersSection.LayoutOrder = 3
 PlayersSection.Size = UDim2.new(1, 0, 0, 16)
 PlayersSection.BackgroundTransparency = 1
 PlayersSection.Text = "PLAYERS"
@@ -1327,7 +1102,7 @@ PlayersSection.TextColor3 = Theme.Accent
 PlayersSection.TextXAlignment = Enum.TextXAlignment.Left
 
 local PlayersList = Instance.new("ScrollingFrame", TabPages.Client)
-PlayersList.LayoutOrder = 5
+PlayersList.LayoutOrder = 4
 PlayersList.Size = UDim2.new(1, 0, 0, 180)
 PlayersList.BackgroundColor3 = Theme.Panel
 PlayersList.BorderSizePixel = 0
@@ -1344,10 +1119,6 @@ PlayersPad.PaddingTop    = UDim.new(0, 8)
 PlayersPad.PaddingBottom = UDim.new(0, 8)
 PlayersPad.PaddingLeft   = UDim.new(0, 8)
 PlayersPad.PaddingRight  = UDim.new(0, 8)
-
-connect(PlayersListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-	PlayersList.CanvasSize = UDim2.new(0, 0, 0, PlayersListLayout.AbsoluteContentSize.Y + 14)
-end)
 
 local function refreshPlayersList()
 	for _, child in ipairs(PlayersList:GetChildren()) do
@@ -1396,28 +1167,19 @@ local function refreshPlayersList()
 	PlayersList.CanvasSize = UDim2.new(0, 0, 0, PlayersListLayout.AbsoluteContentSize.Y + 14)
 end
 
-local serverStartTime = os.time()
+connect(PlayersListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+	PlayersList.CanvasSize = UDim2.new(0, 0, 0, PlayersListLayout.AbsoluteContentSize.Y + 14)
+end)
 
 local function refreshClientCard()
-	NameLabel.Text = "Display Name: " .. (LocalPlayer.DisplayName or "Unknown")
-	UsernameLabel.Text = "Username: @" .. (LocalPlayer.Name or "Unknown")
-	UserIdValue.Text = tostring(LocalPlayer.UserId or 0)
-	AccountAgeValue.Text = getAccountAge()
-
-	local teamName = "None"
-	local teamColor = Theme.SubText
-	if LocalPlayer.Team then
-		teamName = LocalPlayer.Team.Name
-		local tc = LocalPlayer.Team.TeamColor.Color
-		teamColor = tc
-	end
-	TeamValue.Text = teamName
-	TeamValue.TextColor3 = teamColor
+	NameLabel.Text     = "Display Name: " .. (LocalPlayer.DisplayName or "Unknown")
+	UsernameLabel.Text = "Username: @"    .. (LocalPlayer.Name or "Unknown")
+	UserIdLabel.Text   = "User ID: "      .. tostring(LocalPlayer.UserId or 0)
 
 	local connected = isClientConnected()
 	StatusDot.BackgroundColor3 = connected and Theme.Online or Theme.Offline
 	StatusLabel.TextColor3     = connected and Theme.Online or Theme.Offline
-	StatusLabel.Text = connected and "● Connected" or "● Offline"
+	StatusLabel.Text           = connected and "● Online" or "● Offline"
 
 	local ok, content = pcall(function()
 		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
@@ -1429,39 +1191,18 @@ local function refreshClientCard()
 		return MarketplaceService:GetProductInfo(game.PlaceId)
 	end)
 	if infoOk and info and info.Name then experienceName = info.Name end
-	ExperienceValue.Text = experienceName
 
-	PlaceIdValue.Text = tostring(game.PlaceId)
+	ExperienceLabel.Text = "Experience: " .. experienceName
+	PlaceIdLabel.Text    = "Place ID: "   .. tostring(game.PlaceId)
 	local shortJob = tostring(game.JobId or "N/A")
-	if #shortJob > 20 then shortJob = string.sub(shortJob, 1, 20) .. "..." end
-	ServerIdValue.Text = shortJob
-
-	-- Server info
-	local maxPlayers = Players.MaxPlayers
-	local curPlayers = #Players:GetPlayers()
-	ServerPlayersValue.Text = curPlayers .. " / " .. maxPlayers
-	local fillPct = math.clamp(curPlayers / math.max(maxPlayers, 1), 0, 1)
-	FillBarFill.Size = UDim2.new(fillPct, 0, 1, 0)
-
-	local serverAge = os.time() - serverStartTime
-	local sm = math.floor(serverAge / 60)
-	local ss = serverAge % 60
-	ServerAgeValue.Text = sm > 0 and (sm .. "m " .. ss .. "s") or (ss .. "s")
-
-	local ping = 0
-	pcall(function()
-		ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
-	end)
-	ServerPingValue.Text = ping .. "ms"
-	ServerPingValue.TextColor3 = getPingColor(ping)
-
+	if #shortJob > 28 then shortJob = string.sub(shortJob, 1, 28) .. "..." end
+	JobIdLabel.Text = "Server ID: " .. shortJob
 	refreshPlayersList()
 end
 
 refreshClientCard()
-
-local RefreshButton = ActionButton(TabPages.Client, "Refresh", refreshClientCard)
-RefreshButton.LayoutOrder = 6
+local RefreshButton = ActionButton(TabPages.Client, "Refresh Client Status", refreshClientCard)
+RefreshButton.LayoutOrder = 2
 
 connect(Players.PlayerAdded, function(p)
 	refreshPlayersList()
@@ -1470,32 +1211,6 @@ end)
 connect(Players.PlayerRemoving, function(p)
 	refreshPlayersList()
 	Notify("Player Left", p.DisplayName .. " (@" .. p.Name .. ")")
-end)
-
--- Periodically refresh server age + ping in client tab
-task.spawn(function()
-	while not Unloaded do
-		task.wait(5)
-		pcall(function()
-			local serverAge = os.time() - serverStartTime
-			local sm = math.floor(serverAge / 60)
-			local ss = serverAge % 60
-			ServerAgeValue.Text = sm > 0 and (sm .. "m " .. ss .. "s") or (ss .. "s")
-
-			local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
-			ServerPingValue.Text = ping .. "ms"
-			ServerPingValue.TextColor3 = getPingColor(ping)
-
-			local teamName = "None"
-			local teamColor = Theme.SubText
-			if LocalPlayer.Team then
-				teamName = LocalPlayer.Team.Name
-				teamColor = LocalPlayer.Team.TeamColor.Color
-			end
-			TeamValue.Text = teamName
-			TeamValue.TextColor3 = teamColor
-		end)
-	end
 end)
 
 --==================================================
@@ -1524,6 +1239,7 @@ local BonesR15 = {
 	{ "LowerTorso", "LeftUpperLeg" },  { "LeftUpperLeg",  "LeftLowerLeg" },  { "LeftLowerLeg",  "LeftFoot" },
 	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
 }
+
 local BonesR6 = {
 	{ "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" },
 	{ "Torso", "Left Leg" }, { "Torso", "Right Leg" },
@@ -1547,6 +1263,7 @@ end
 for _, p in ipairs(Players:GetPlayers()) do
 	if p ~= LocalPlayer then hookPlayerCharacter(p) end
 end
+
 connect(Players.PlayerAdded,    function(p) hookPlayerCharacter(p) end)
 connect(Players.PlayerRemoving, function(p)
 	if CharacterConnections[p] then
@@ -1582,13 +1299,16 @@ end)
 connect(RunService.RenderStepped, function(dt)
 	if Unloaded then return end
 
+	-- Player modifiers
 	local char = LocalPlayer.Character
 	if char and char:FindFirstChildOfClass("Humanoid") then
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum.WalkSpeed ~= WalkSpeed then hum.WalkSpeed = WalkSpeed end
 		if hum.JumpPower  ~= JumpPower  then hum.JumpPower  = JumpPower  end
 	end
-	if Camera.FieldOfView ~= CameraFOV then Camera.FieldOfView = CameraFOV end
+	if Camera.FieldOfView ~= CameraFOV then
+		Camera.FieldOfView = CameraFOV
+	end
 
 	-- CFrame movement
 	if CFrameMoveEnabled and char and char:FindFirstChild("HumanoidRootPart") then
@@ -1623,37 +1343,36 @@ connect(RunService.RenderStepped, function(dt)
 	end
 
 	-- Triggerbot
+	-- Fires a left click when the crosshair naturally sits over an enemy
+	-- within TriggerbotThreshold pixels. Respects TriggerbotDelay between shots.
 	if TriggerbotEnabled then
-		local tTarget = getCrosshairTarget()
+		local tTarget, _ = getCrosshairTarget()
 		if tTarget then
 			local now = tick()
 			if now - lastTriggerFire >= TriggerbotDelay then
 				lastTriggerFire = now
+				-- Simulate left mouse click
 				if typeof(mouse1click) == "function" then
 					mouse1click()
 				elseif typeof(mouse1press) == "function" then
 					mouse1press()
 					task.delay(0.06, function()
-						if typeof(mouse1release) == "function" then mouse1release() end
+						if typeof(mouse1release) == "function" then
+							mouse1release()
+						end
 					end)
 				end
 			end
 		end
 	end
 
-	-- ESP loop
+	-- Bone / Tracer / Box ESP
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and isEnemy(p) then
 			local enemyChar = p.Character
 			local hum  = enemyChar:FindFirstChildOfClass("Humanoid")
 			local root = enemyChar:FindFirstChild("HumanoidRootPart")
-			local head = enemyChar:FindFirstChild("Head")
 
-			-- World distance from local player
-			local myRoot = char and char:FindFirstChild("HumanoidRootPart")
-			local worldDist = myRoot and root and (root.Position - myRoot.Position).Magnitude or 0
-
-			-- Bone ESP
 			if BoneESPEnabled and hum then
 				local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
 				BoneLines[p] = BoneLines[p] or {}
@@ -1681,7 +1400,6 @@ connect(RunService.RenderStepped, function(dt)
 				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
 			end
 
-			-- Tracers
 			if TracersEnabled and root then
 				local pos, vis = Camera:WorldToViewportPoint(root.Position)
 				TracerLines[p] = TracerLines[p] or newDrawingLine(1.6)
@@ -1700,7 +1418,6 @@ connect(RunService.RenderStepped, function(dt)
 				TracerLines[p].Visible = false
 			end
 
-			-- Box ESP
 			if BoxESPEnabled and hum then
 				local minX, minY, maxX, maxY = getCharacterBounds2D(enemyChar)
 				BoxLines[p] = BoxLines[p] or {
@@ -1726,77 +1443,14 @@ connect(RunService.RenderStepped, function(dt)
 			elseif BoxLines[p] then
 				for _, line in pairs(BoxLines[p]) do if line then line.Visible = false end end
 			end
-
-			-- Name + Distance ESP
-			-- Renders above the character's head with color shifting by distance
-			if NameESPEnabled and head then
-				local headPos, headVis = Camera:WorldToViewportPoint(head.Position)
-				NameLabels[p] = NameLabels[p] or newDrawingText()
-				local lbl = NameLabels[p]
-				if lbl then
-					if headVis then
-						local distStr = string.format("[%d]", math.floor(worldDist + 0.5))
-						lbl.Text = p.DisplayName .. " " .. distStr
-						lbl.Color = distanceColor(worldDist)
-						lbl.Position = Vector2.new(headPos.X, headPos.Y - 18)
-						lbl.Center = true
-						lbl.Visible = true
-					else
-						lbl.Visible = false
-					end
-				end
-			elseif NameLabels[p] then
-				NameLabels[p].Visible = false
-			end
-
-			-- Health Bar ESP
-			-- Thin vertical bar to the left of the character bounding box
-			if HealthBarESPEnabled and hum then
-				local minX, minY, maxX, maxY = getCharacterBounds2D(enemyChar)
-				if minX then
-					local barX    = minX - 5
-					local barH    = maxY - minY
-					local hpPct   = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-					local fillH   = barH * hpPct
-
-					-- Background bar
-					HealthBarBGs[p] = HealthBarBGs[p] or newDrawingRect(true)
-					local bg = HealthBarBGs[p]
-					if bg then
-						bg.Color = Color3.fromRGB(30, 30, 30)
-						bg.Size = Vector2.new(4, barH)
-						bg.Position = Vector2.new(barX - 2, minY)
-						bg.Visible = true
-					end
-
-					-- Fill bar
-					HealthBarFills[p] = HealthBarFills[p] or newDrawingRect(true)
-					local fill = HealthBarFills[p]
-					if fill then
-						fill.Color = healthToColor(hpPct)
-						fill.Size = Vector2.new(4, fillH)
-						fill.Position = Vector2.new(barX - 2, minY + (barH - fillH))
-						fill.Visible = true
-					end
-				else
-					if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
-					if HealthBarFills[p] then HealthBarFills[p].Visible = false end
-				end
-			else
-				if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
-				if HealthBarFills[p] then HealthBarFills[p].Visible = false end
-			end
-
 		else
-			-- Player is not an enemy or is dead — hide all their drawings
 			if BoneLines[p] then
 				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
 			end
-			if TracerLines[p]    then TracerLines[p].Visible    = false end
-			if BoxLines[p]       then for _, line in pairs(BoxLines[p]) do if line then line.Visible = false end end end
-			if NameLabels[p]     then NameLabels[p].Visible     = false end
-			if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
-			if HealthBarFills[p] then HealthBarFills[p].Visible = false end
+			if TracerLines[p] then TracerLines[p].Visible = false end
+			if BoxLines[p] then
+				for _, line in pairs(BoxLines[p]) do if line then line.Visible = false end end
+			end
 		end
 	end
 
@@ -1848,12 +1502,14 @@ connect(RunService.RenderStepped, function(dt)
 		local myChar = LocalPlayer.Character
 		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 		local dotIndex = 0
+
 		if myRoot then
-			local myPos   = myRoot.Position
-			local myYaw   = myRoot.CFrame.LookVector
-			local half    = RadarSize / 2
+			local myPos  = myRoot.Position
+			local myYaw  = myRoot.CFrame.LookVector
+			local half   = RadarSize / 2
 			local forward = Vector3.new(myYaw.X, 0, myYaw.Z).Unit
 			local right   = Vector3.new(forward.Z, 0, -forward.X)
+
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) then
 					local theirRoot = p.Character:FindFirstChild("HumanoidRootPart")
@@ -1866,10 +1522,9 @@ connect(RunService.RenderStepped, function(dt)
 							local fx = flatDiff:Dot(right)
 							local fy = flatDiff:Dot(forward)
 							local scale = (half - 6) / RadarRange
-							dot.Position = UDim2.fromOffset(
-								math.clamp(half + fx * scale, 6, RadarSize - 6),
-								math.clamp(half - fy * scale, 6, RadarSize - 6)
-							)
+							local dotX = math.clamp(half + fx * scale, 6, RadarSize - 6)
+							local dotY = math.clamp(half - fy * scale, 6, RadarSize - 6)
+							dot.Position = UDim2.fromOffset(dotX, dotY)
 							dot.BackgroundColor3 = isEnemy(p) and Theme.RadarDot or Theme.RadarSelf
 							dot.Visible = true
 						end
@@ -1877,53 +1532,42 @@ connect(RunService.RenderStepped, function(dt)
 				end
 			end
 		end
+
 		for i = dotIndex + 1, #RadarDotPool do
 			RadarDotPool[i].Visible = false
 		end
 	end
 
-	-- HUD + session stats update (throttled)
+	-- HUD stats update (throttled to every 0.25s to avoid spam)
 	local now = tick()
-	if now - lastHUDUpdate >= 0.25 then
-		lastHUDUpdate = now
+	if now - lastFpsUpdate >= 0.25 then
+		lastFpsUpdate = now
 
+		-- FPS rolling average
 		table.insert(fpsBuffer, 1 / math.max(dt, 0.001))
 		if #fpsBuffer > fpsBufferSize then table.remove(fpsBuffer, 1) end
 		local sum = 0
 		for _, v in ipairs(fpsBuffer) do sum = sum + v end
 		local fps = math.floor(sum / #fpsBuffer + 0.5)
 
-		local ping = 0
-		pcall(function()
-			ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
-		end)
+		-- Ping via Stats service
+		local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
 
+		-- Player count (excluding self)
 		local playerCount = #Players:GetPlayers()
 
-		HUDFpsLabel.Text       = fps .. " FPS"
+		HUDFpsLabel.Text  = fps .. " FPS"
 		HUDFpsLabel.TextColor3 = getFPSColor(fps)
-		HUDPingLabel.Text      = ping .. "ms"
+
+		HUDPingLabel.Text = ping .. "ms"
 		HUDPingLabel.TextColor3 = getPingColor(ping)
-		HUDPlayersLabel.Text   = playerCount .. " plrs"
+
+		HUDPlayersLabel.Text = playerCount .. " plrs"
+		HUDPlayersLabel.TextColor3 = Theme.SubText
+
+		-- Update name/username in case of display name change
 		HUDName.Text = LocalPlayer.DisplayName or "..."
 		HUDUser.Text = "@" .. (LocalPlayer.Name or "...")
-
-		-- Session stats on HUD bottom row
-		HUDStats.Text = "K/D: " .. getKD() .. "  T: " .. formatSessionTime()
-
-		-- Session stats card
-		SessionTimeValue.Text   = formatSessionTime()
-		SessionKillsValue.Text  = tostring(SessionKills)
-		SessionDeathsValue.Text = tostring(SessionDeaths)
-		SessionKDValue.Text     = getKD()
-		SessionFPSValue.Text    = fps .. " fps"
-		SessionFPSValue.TextColor3 = getFPSColor(fps)
-
-		-- Player fill bar in server card
-		local maxP = Players.MaxPlayers
-		local curP = #Players:GetPlayers()
-		FillBarFill.Size = UDim2.new(math.clamp(curP / math.max(maxP, 1), 0, 1), 0, 1, 0)
-		ServerPlayersValue.Text = curP .. " / " .. maxP
 	end
 end)
 
@@ -1983,6 +1627,7 @@ end
 
 connect(Close.MouseButton1Click, unload)
 
+-- Startup
 task.delay(0.5, function()
-	Notify("Mars Solutions", "v5 loaded. [Insert] to toggle menu.", 4)
+	Notify("Mars Solutions", "v4 loaded. [Insert] to toggle menu.", 4)
 end)
