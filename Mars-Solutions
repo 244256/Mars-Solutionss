@@ -20,6 +20,7 @@ local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Stats            = game:GetService("Stats")
+local CoreGui          = game:GetService("CoreGui")
 local Camera           = workspace.CurrentCamera
 local LocalPlayer      = Players.LocalPlayer
 
@@ -431,7 +432,7 @@ ScreenGui.Name          = "MarsSolutions_v5"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ResetOnSpawn  = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent        = game:GetService("CoreGui")
+ScreenGui.Parent        = CoreGui
 
 --==================================================
 -- Notification System  (with progress bar)
@@ -2830,7 +2831,7 @@ connect(RunService.Heartbeat, function()
             end
         end
     else
-        for _, p in pairs(HitboxParts) do pcall(function() p:Destroy() end) end
+        for _, sb in pairs(HitboxParts) do pcall(function() sb:Destroy() end) end
         HitboxParts = {}
     end
 
