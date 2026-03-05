@@ -1,5 +1,6 @@
 --==================================================
 -- Mars Solutions | UI v5 + SNAP AIM + ESP + CLIENT
+-- v5 - Session Stats, Full Client Card, Name/Distance ESP, Health Bar ESP
 --==================================================
 
 --// Services
@@ -8,9 +9,86 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
+local Stats = game:GetService("Stats")
 local Camera = workspace.CurrentCamera
 
 local LocalPlayer = Players.LocalPlayer
+
+--==================================================
+-- Session Stats (tracked from inject time)
+--==================================================
+
+local SessionStart  = os.time()
+local SessionKills  = 0
+local SessionDeaths = 0
+local KilledPlayers = {} -- debounce so one death = one kill
+
+local function onEnemyDied(player)
+	if KilledPlayers[player] then return end
+	KilledPlayers[player] = true
+	SessionKills = SessionKills + 1
+	task.delay(2, function() KilledPlayers[player] = nil end)
+end
+
+local function onLocalDied()
+	SessionDeaths = SessionDeaths + 1
+end
+
+local function hookCharacterDeaths(char, player)
+	local hum = char:WaitForChild("Humanoid", 5)
+	if not hum then return end
+	if player == LocalPlayer then
+		hum.Died:Connect(onLocalDied)
+	else
+		hum.Died:Connect(function() onEnemyDied(player) end)
+	end
+end
+
+local function hookPlayer(p)
+	if p.Character then
+		task.spawn(hookCharacterDeaths, p.Character, p)
+	end
+	p.CharacterAdded:Connect(function(char)
+		task.spawn(hookCharacterDeaths, char, p)
+	end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
+Players.PlayerAdded:Connect(hookPlayer)
+
+local function formatSessionTime()
+	local elapsed = os.time() - SessionStart
+	local h = math.floor(elapsed / 3600)
+	local m = math.floor((elapsed % 3600) / 60)
+	local s = elapsed % 60
+	if h > 0 then
+		return string.format("%dh %dm %ds", h, m, s)
+	elseif m > 0 then
+		return string.format("%dm %ds", m, s)
+	else
+		return string.format("%ds", s)
+	end
+end
+
+local function getKD()
+	if SessionDeaths == 0 then
+		return SessionKills == 0 and "0.00" or tostring(SessionKills) .. ".00"
+	end
+	return string.format("%.2f", SessionKills / SessionDeaths)
+end
+
+local function getAccountAge()
+	local days = LocalPlayer.AccountAge
+	local years  = math.floor(days / 365)
+	local months = math.floor((days % 365) / 30)
+	if years > 0 then
+		return string.format("%dy %dm", years, months)
+	elseif months > 0 then
+		return string.format("%dm (%dd)", months, days)
+	else
+		return days .. " days"
+	end
+end
 
 --==================================================
 -- State
@@ -21,6 +99,14 @@ local AimFOV = 120
 local AimStrength = 8
 local Prediction = 0
 local VisibleCheck = false
+local AimbotEnabled = false
+local SilentAimEnabled = false
+local AimMaxDistance = 500
+
+local TriggerbotEnabled = false
+local TriggerbotDelay = 0.05
+local TriggerbotThreshold = 12
+local lastTriggerFire = 0
 
 local WalkSpeed = 16
 local JumpPower = 50
@@ -30,26 +116,45 @@ local CFrameMoveEnabled = false
 local CFrameWalkSpeed = 24
 local CFrameJumpSpeed = 18
 
-local BoneESPEnabled = false
-local TracersEnabled = false
-local BoneLines = {}
-local TracerLines = {}
+local BoneESPEnabled     = false
+local TracersEnabled     = false
+local BoxESPEnabled      = false
+local NameESPEnabled     = false
+local HealthBarESPEnabled = false
+local AimTargetInfoEnabled = false
+local RadarEnabled       = false
 
-local AimPartOptions = { "Head", "UpperTorso", "HumanoidRootPart" }
-local AimPartIndex = 1
+local BoneLines      = {}
+local TracerLines    = {}
+local BoxLines       = {}
+local NameLabels     = {}
+local HealthBarBGs   = {}
+local HealthBarFills = {}
+
+local AimPartOptions  = { "Head", "UpperTorso", "HumanoidRootPart" }
+local AimMethodOptions = { "Camera", "Mouse" }
+local AimPartIndex  = 1
+local AimMethodIndex = 1
 
 local Theme = {
-	Accent = Color3.fromRGB(255, 70, 70),
-	Main = Color3.fromRGB(12, 12, 12),
-	Header = Color3.fromRGB(16, 16, 16),
-	Panel = Color3.fromRGB(20, 20, 20),
-	Button = Color3.fromRGB(22, 22, 22),
+	Accent      = Color3.fromRGB(255, 70, 70),
+	Main        = Color3.fromRGB(12, 12, 12),
+	Header      = Color3.fromRGB(16, 16, 16),
+	Panel       = Color3.fromRGB(20, 20, 20),
+	Button      = Color3.fromRGB(22, 22, 22),
 	ButtonHover = Color3.fromRGB(30, 30, 30),
-	Bar = Color3.fromRGB(30, 30, 30),
-	Text = Color3.fromRGB(220, 220, 220),
-	SubText = Color3.fromRGB(150, 150, 150),
-	Online = Color3.fromRGB(70, 220, 120),
-	Offline = Color3.fromRGB(230, 70, 70),
+	Bar         = Color3.fromRGB(30, 30, 30),
+	Text        = Color3.fromRGB(220, 220, 220),
+	SubText     = Color3.fromRGB(150, 150, 150),
+	Online      = Color3.fromRGB(70, 220, 120),
+	Offline     = Color3.fromRGB(230, 70, 70),
+	RadarBG     = Color3.fromRGB(10, 10, 10),
+	RadarDot    = Color3.fromRGB(255, 70, 70),
+	RadarSelf   = Color3.fromRGB(70, 220, 120),
+	HUDBg       = Color3.fromRGB(14, 14, 14),
+	HUDGood     = Color3.fromRGB(70, 220, 120),
+	HUDWarn     = Color3.fromRGB(255, 200, 60),
+	HUDBad      = Color3.fromRGB(230, 70, 70),
 }
 
 local Connections = {}
@@ -70,29 +175,54 @@ local function tween(obj, props, t)
 end
 
 local function disconnectAll()
-	for _, c in ipairs(Connections) do
-		pcall(function()
-			c:Disconnect()
-		end)
-	end
+	for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
 	table.clear(Connections)
 end
 
 local function clearAllDrawings()
 	for _, lines in pairs(BoneLines) do
-		for _, l in pairs(lines) do
-			pcall(function()
-				l:Remove()
-			end)
-		end
+		for _, l in pairs(lines) do pcall(function() l:Remove() end) end
 	end
-	for _, l in pairs(TracerLines) do
-		pcall(function()
-			l:Remove()
-		end)
+	for _, l in pairs(TracerLines) do pcall(function() l:Remove() end) end
+	for _, lines in pairs(BoxLines) do
+		for _, l in pairs(lines) do pcall(function() l:Remove() end) end
 	end
+	for _, l in pairs(NameLabels) do pcall(function() l:Remove() end) end
+	for _, l in pairs(HealthBarBGs) do pcall(function() l:Remove() end) end
+	for _, l in pairs(HealthBarFills) do pcall(function() l:Remove() end) end
 	BoneLines = {}
 	TracerLines = {}
+	BoxLines = {}
+	NameLabels = {}
+	HealthBarBGs = {}
+	HealthBarFills = {}
+end
+
+local function flushPlayerLines(p)
+	if BoneLines[p] then
+		for _, l in pairs(BoneLines[p]) do pcall(function() l:Remove() end) end
+		BoneLines[p] = nil
+	end
+	if TracerLines[p] then
+		pcall(function() TracerLines[p]:Remove() end)
+		TracerLines[p] = nil
+	end
+	if BoxLines[p] then
+		for _, l in pairs(BoxLines[p]) do pcall(function() l:Remove() end) end
+		BoxLines[p] = nil
+	end
+	if NameLabels[p] then
+		pcall(function() NameLabels[p]:Remove() end)
+		NameLabels[p] = nil
+	end
+	if HealthBarBGs[p] then
+		pcall(function() HealthBarBGs[p]:Remove() end)
+		HealthBarBGs[p] = nil
+	end
+	if HealthBarFills[p] then
+		pcall(function() HealthBarFills[p]:Remove() end)
+		HealthBarFills[p] = nil
+	end
 end
 
 local function isAliveCharacter(char)
@@ -109,6 +239,26 @@ local function newDrawingLine(thickness)
 	l.Transparency = 1
 	l.Visible = false
 	return l
+end
+
+local function newDrawingText()
+	if not Drawing then return nil end
+	local t = Drawing.new("Text")
+	t.Size = 13
+	t.Font = Drawing.Fonts.UI
+	t.Color = Color3.fromRGB(255, 255, 255)
+	t.Outline = true
+	t.OutlineColor = Color3.fromRGB(0, 0, 0)
+	t.Visible = false
+	return t
+end
+
+local function newDrawingRect(filled)
+	if not Drawing then return nil end
+	local r = Drawing.new("Square")
+	r.Filled = filled or false
+	r.Visible = false
+	return r
 end
 
 local function getAimPart(character)
@@ -133,27 +283,106 @@ local function getAimPoint(part)
 	return part.Position + part.AssemblyLinearVelocity * Prediction
 end
 
+local function getCharacterBounds2D(character)
+	local cf, size = character:GetBoundingBox()
+	local half = size * 0.5
+	local corners = {
+		cf * Vector3.new(-half.X, -half.Y, -half.Z),
+		cf * Vector3.new(-half.X, -half.Y,  half.Z),
+		cf * Vector3.new(-half.X,  half.Y, -half.Z),
+		cf * Vector3.new(-half.X,  half.Y,  half.Z),
+		cf * Vector3.new( half.X, -half.Y, -half.Z),
+		cf * Vector3.new( half.X, -half.Y,  half.Z),
+		cf * Vector3.new( half.X,  half.Y, -half.Z),
+		cf * Vector3.new( half.X,  half.Y,  half.Z),
+	}
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local anyVisible = false
+	for _, corner in ipairs(corners) do
+		local point, visible = Camera:WorldToViewportPoint(corner)
+		if visible then anyVisible = true end
+		minX = math.min(minX, point.X)
+		maxX = math.max(maxX, point.X)
+		minY = math.min(minY, point.Y)
+		maxY = math.max(maxY, point.Y)
+	end
+	if not anyVisible then return nil end
+	return minX, minY, maxX, maxY
+end
+
+local function isEnemy(p)
+	local myTeam    = LocalPlayer.Team
+	local theirTeam = p.Team
+	if myTeam == nil or theirTeam == nil then return true end
+	return myTeam ~= theirTeam
+end
+
+local function healthToColor(pct)
+	-- Green at 100%, yellow at 50%, red at 0%
+	if pct >= 0.5 then
+		local t = (pct - 0.5) * 2
+		return Color3.fromRGB(
+			math.floor(255 * (1 - t)),
+			220,
+			math.floor(60 * (1 - t))
+		)
+	else
+		local t = pct * 2
+		return Color3.fromRGB(230, math.floor(220 * t), 0)
+	end
+end
+
+local function distanceColor(dist)
+	local pct = 1 - math.clamp(dist / AimMaxDistance, 0, 1)
+	return healthToColor(pct)
+end
+
 local function getTarget()
 	local center = Camera.ViewportSize / 2
-	local best, bestDist = nil, AimFOV
-
+	local best, bestPlayer, bestDist = nil, nil, AimFOV
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and p.Team ~= LocalPlayer.Team then
+		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and isEnemy(p) then
 			local part = getAimPart(p.Character)
 			if part and isVisible(part) then
+				local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if myRoot then
+					if (part.Position - myRoot.Position).Magnitude > AimMaxDistance then continue end
+				end
 				local pos, vis = Camera:WorldToViewportPoint(getAimPoint(part))
 				if vis then
 					local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
 					if dist <= bestDist then
 						bestDist = dist
 						best = part
+						bestPlayer = p
 					end
 				end
 			end
 		end
 	end
+	return best, bestPlayer
+end
 
-	return best
+local function getCrosshairTarget()
+	local center = Camera.ViewportSize / 2
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and isEnemy(p) then
+			local part = getAimPart(p.Character)
+			if part and isVisible(part) then
+				local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if myRoot then
+					if (part.Position - myRoot.Position).Magnitude > AimMaxDistance then continue end
+				end
+				local pos, vis = Camera:WorldToViewportPoint(part.Position)
+				if vis then
+					local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+					if dist <= TriggerbotThreshold then return part, p end
+				end
+			end
+		end
+	end
+	return nil, nil
 end
 
 --==================================================
@@ -167,11 +396,361 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = game:GetService("CoreGui")
 
 --==================================================
+-- Notification System
+--==================================================
+
+local NotifContainer = Instance.new("Frame", ScreenGui)
+NotifContainer.Size = UDim2.fromOffset(260, 400)
+NotifContainer.Position = UDim2.new(1, -270, 1, -20)
+NotifContainer.AnchorPoint = Vector2.new(0, 1)
+NotifContainer.BackgroundTransparency = 1
+NotifContainer.BorderSizePixel = 0
+
+local NotifLayout = Instance.new("UIListLayout", NotifContainer)
+NotifLayout.Padding = UDim.new(0, 6)
+NotifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+NotifLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local notifCount = 0
+
+local function Notify(title, message, duration)
+	duration = duration or 3
+	notifCount = notifCount + 1
+
+	local card = Instance.new("Frame", NotifContainer)
+	card.LayoutOrder = notifCount
+	card.Size = UDim2.fromOffset(260, 52)
+	card.BackgroundColor3 = Theme.Panel
+	card.BorderSizePixel = 0
+	card.BackgroundTransparency = 1
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
+
+	local stroke = Instance.new("UIStroke", card)
+	stroke.Color = Theme.Accent
+	stroke.Thickness = 1
+	stroke.Transparency = 1
+
+	local accent = Instance.new("Frame", card)
+	accent.Size = UDim2.new(0, 3, 1, -12)
+	accent.Position = UDim2.fromOffset(6, 6)
+	accent.BackgroundColor3 = Theme.Accent
+	accent.BorderSizePixel = 0
+	accent.BackgroundTransparency = 1
+	Instance.new("UICorner", accent).CornerRadius = UDim.new(1, 0)
+
+	local titleLabel = Instance.new("TextLabel", card)
+	titleLabel.Size = UDim2.new(1, -22, 0, 18)
+	titleLabel.Position = UDim2.fromOffset(16, 8)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Font = Enum.Font.GothamBold
+	titleLabel.TextSize = 12
+	titleLabel.TextColor3 = Theme.Accent
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	titleLabel.Text = title
+	titleLabel.TextTransparency = 1
+
+	local msgLabel = Instance.new("TextLabel", card)
+	msgLabel.Size = UDim2.new(1, -22, 0, 16)
+	msgLabel.Position = UDim2.fromOffset(16, 28)
+	msgLabel.BackgroundTransparency = 1
+	msgLabel.Font = Enum.Font.Gotham
+	msgLabel.TextSize = 11
+	msgLabel.TextColor3 = Theme.SubText
+	msgLabel.TextXAlignment = Enum.TextXAlignment.Left
+	msgLabel.Text = message
+	msgLabel.TextTransparency = 1
+
+	tween(card,       { BackgroundTransparency = 0 },   0.2)
+	tween(stroke,     { Transparency = 0.6 },           0.2)
+	tween(accent,     { BackgroundTransparency = 0 },   0.2)
+	tween(titleLabel, { TextTransparency = 0 },         0.2)
+	tween(msgLabel,   { TextTransparency = 0 },         0.2)
+
+	task.delay(duration, function()
+		if not (card and card.Parent) then return end
+		tween(card,       { BackgroundTransparency = 1 }, 0.3)
+		tween(stroke,     { Transparency = 1 },           0.3)
+		tween(accent,     { BackgroundTransparency = 1 }, 0.3)
+		tween(titleLabel, { TextTransparency = 1 },       0.3)
+		tween(msgLabel,   { TextTransparency = 1 },       0.3)
+		task.delay(0.35, function()
+			if card and card.Parent then card:Destroy() end
+		end)
+	end)
+end
+
+--==================================================
+-- Radar
+--==================================================
+
+local RadarSize  = 160
+local RadarRange = 100
+
+local RadarFrame = Instance.new("Frame", ScreenGui)
+RadarFrame.Size = UDim2.fromOffset(RadarSize, RadarSize)
+RadarFrame.Position = UDim2.new(0, 16, 1, -176)
+RadarFrame.BackgroundColor3 = Theme.RadarBG
+RadarFrame.BorderSizePixel = 0
+RadarFrame.Visible = false
+Instance.new("UICorner", RadarFrame).CornerRadius = UDim.new(1, 0)
+
+local RadarStroke = Instance.new("UIStroke", RadarFrame)
+RadarStroke.Color = Theme.Accent
+RadarStroke.Thickness = 1.5
+RadarStroke.Transparency = 0.4
+
+local RadarLineH = Instance.new("Frame", RadarFrame)
+RadarLineH.Size = UDim2.new(1, -20, 0, 1)
+RadarLineH.Position = UDim2.new(0, 10, 0.5, 0)
+RadarLineH.AnchorPoint = Vector2.new(0, 0.5)
+RadarLineH.BackgroundColor3 = Theme.Accent
+RadarLineH.BorderSizePixel = 0
+RadarLineH.BackgroundTransparency = 0.7
+
+local RadarLineV = Instance.new("Frame", RadarFrame)
+RadarLineV.Size = UDim2.new(0, 1, 1, -20)
+RadarLineV.Position = UDim2.new(0.5, 0, 0, 10)
+RadarLineV.AnchorPoint = Vector2.new(0.5, 0)
+RadarLineV.BackgroundColor3 = Theme.Accent
+RadarLineV.BorderSizePixel = 0
+RadarLineV.BackgroundTransparency = 0.7
+
+local RadarLabel = Instance.new("TextLabel", RadarFrame)
+RadarLabel.Size = UDim2.new(1, 0, 0, 14)
+RadarLabel.Position = UDim2.new(0, 0, 1, 4)
+RadarLabel.BackgroundTransparency = 1
+RadarLabel.Font = Enum.Font.GothamBold
+RadarLabel.TextSize = 10
+RadarLabel.TextColor3 = Theme.SubText
+RadarLabel.Text = "RADAR"
+
+local SelfDot = Instance.new("Frame", RadarFrame)
+SelfDot.Size = UDim2.fromOffset(6, 6)
+SelfDot.AnchorPoint = Vector2.new(0.5, 0.5)
+SelfDot.Position = UDim2.new(0.5, 0, 0.5, 0)
+SelfDot.BackgroundColor3 = Theme.RadarSelf
+SelfDot.BorderSizePixel = 0
+Instance.new("UICorner", SelfDot).CornerRadius = UDim.new(1, 0)
+
+local RadarDotPool = {}
+local function getRadarDot(index)
+	if not RadarDotPool[index] then
+		local dot = Instance.new("Frame", RadarFrame)
+		dot.Size = UDim2.fromOffset(7, 7)
+		dot.AnchorPoint = Vector2.new(0.5, 0.5)
+		dot.BackgroundColor3 = Theme.RadarDot
+		dot.BorderSizePixel = 0
+		dot.Visible = false
+		Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+		RadarDotPool[index] = dot
+	end
+	return RadarDotPool[index]
+end
+
+--==================================================
+-- Draggable HUD
+--==================================================
+
+local HUD = Instance.new("Frame", ScreenGui)
+HUD.Size = UDim2.fromOffset(210, 54)
+HUD.Position = UDim2.new(0, 16, 0, 16)
+HUD.BackgroundColor3 = Theme.HUDBg
+HUD.BorderSizePixel = 0
+HUD.Active = true
+Instance.new("UICorner", HUD).CornerRadius = UDim.new(0, 12)
+
+local HUDStroke = Instance.new("UIStroke", HUD)
+HUDStroke.Color = Theme.Accent
+HUDStroke.Thickness = 1
+HUDStroke.Transparency = 0.5
+
+local HUDAccent = Instance.new("Frame", HUD)
+HUDAccent.Size = UDim2.new(0, 3, 1, -12)
+HUDAccent.Position = UDim2.fromOffset(6, 6)
+HUDAccent.BackgroundColor3 = Theme.Accent
+HUDAccent.BorderSizePixel = 0
+Instance.new("UICorner", HUDAccent).CornerRadius = UDim.new(1, 0)
+
+local HUDAvatar = Instance.new("ImageLabel", HUD)
+HUDAvatar.Size = UDim2.fromOffset(36, 36)
+HUDAvatar.Position = UDim2.fromOffset(14, 9)
+HUDAvatar.BackgroundColor3 = Theme.Panel
+HUDAvatar.BorderSizePixel = 0
+Instance.new("UICorner", HUDAvatar).CornerRadius = UDim.new(1, 0)
+
+local HUDName = Instance.new("TextLabel", HUD)
+HUDName.Size = UDim2.new(0, 98, 0, 16)
+HUDName.Position = UDim2.fromOffset(56, 7)
+HUDName.BackgroundTransparency = 1
+HUDName.Font = Enum.Font.GothamBold
+HUDName.TextSize = 11
+HUDName.TextColor3 = Theme.Text
+HUDName.TextXAlignment = Enum.TextXAlignment.Left
+HUDName.TextTruncate = Enum.TextTruncate.AtEnd
+HUDName.Text = LocalPlayer.DisplayName or "..."
+
+local HUDUser = Instance.new("TextLabel", HUD)
+HUDUser.Size = UDim2.new(0, 98, 0, 13)
+HUDUser.Position = UDim2.fromOffset(56, 23)
+HUDUser.BackgroundTransparency = 1
+HUDUser.Font = Enum.Font.Gotham
+HUDUser.TextSize = 10
+HUDUser.TextColor3 = Theme.SubText
+HUDUser.TextXAlignment = Enum.TextXAlignment.Left
+HUDUser.TextTruncate = Enum.TextTruncate.AtEnd
+HUDUser.Text = "@" .. (LocalPlayer.Name or "...")
+
+local HUDStats = Instance.new("TextLabel", HUD)
+HUDStats.Size = UDim2.new(0, 98, 0, 12)
+HUDStats.Position = UDim2.fromOffset(56, 38)
+HUDStats.BackgroundTransparency = 1
+HUDStats.Font = Enum.Font.Gotham
+HUDStats.TextSize = 10
+HUDStats.TextColor3 = Theme.SubText
+HUDStats.TextXAlignment = Enum.TextXAlignment.Left
+HUDStats.Text = "K/D: -- | T: --"
+
+local HUDFpsLabel = Instance.new("TextLabel", HUD)
+HUDFpsLabel.Size = UDim2.fromOffset(56, 14)
+HUDFpsLabel.Position = UDim2.fromOffset(152, 8)
+HUDFpsLabel.BackgroundTransparency = 1
+HUDFpsLabel.Font = Enum.Font.GothamBold
+HUDFpsLabel.TextSize = 11
+HUDFpsLabel.TextXAlignment = Enum.TextXAlignment.Right
+HUDFpsLabel.Text = "--"
+
+local HUDPingLabel = Instance.new("TextLabel", HUD)
+HUDPingLabel.Size = UDim2.fromOffset(56, 14)
+HUDPingLabel.Position = UDim2.fromOffset(152, 24)
+HUDPingLabel.BackgroundTransparency = 1
+HUDPingLabel.Font = Enum.Font.Gotham
+HUDPingLabel.TextSize = 10
+HUDPingLabel.TextXAlignment = Enum.TextXAlignment.Right
+HUDPingLabel.TextColor3 = Theme.SubText
+HUDPingLabel.Text = "--ms"
+
+local HUDPlayersLabel = Instance.new("TextLabel", HUD)
+HUDPlayersLabel.Size = UDim2.fromOffset(56, 14)
+HUDPlayersLabel.Position = UDim2.fromOffset(152, 38)
+HUDPlayersLabel.BackgroundTransparency = 1
+HUDPlayersLabel.Font = Enum.Font.Gotham
+HUDPlayersLabel.TextSize = 10
+HUDPlayersLabel.TextXAlignment = Enum.TextXAlignment.Right
+HUDPlayersLabel.TextColor3 = Theme.SubText
+HUDPlayersLabel.Text = "-- plrs"
+
+task.spawn(function()
+	local ok, img = pcall(function()
+		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok and img then HUDAvatar.Image = img end
+end)
+
+local hudDragging, hudDragStart, hudStartPos = false, nil, nil
+connect(HUD.InputBegan, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		hudDragging  = true
+		hudDragStart = i.Position
+		hudStartPos  = HUD.Position
+	end
+end)
+connect(UIS.InputEnded, function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then hudDragging = false end
+end)
+connect(UIS.InputChanged, function(i)
+	if hudDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+		local d = i.Position - hudDragStart
+		HUD.Position = UDim2.new(
+			hudStartPos.X.Scale, hudStartPos.X.Offset + d.X,
+			hudStartPos.Y.Scale, hudStartPos.Y.Offset + d.Y
+		)
+	end
+end)
+
+local fpsBuffer = {}
+local fpsBufferSize = 30
+local lastHUDUpdate = 0
+
+local function getFPSColor(fps)
+	if fps >= 55 then return Theme.HUDGood
+	elseif fps >= 30 then return Theme.HUDWarn
+	else return Theme.HUDBad end
+end
+
+local function getPingColor(ping)
+	if ping <= 80 then return Theme.HUDGood
+	elseif ping <= 150 then return Theme.HUDWarn
+	else return Theme.HUDBad end
+end
+
+--==================================================
+-- Target Info
+--==================================================
+
+local ThumbnailCache = {}
+
+local TargetInfo = Instance.new("Frame", ScreenGui)
+TargetInfo.Size = UDim2.fromOffset(220, 74)
+TargetInfo.AnchorPoint = Vector2.new(0.5, 1)
+TargetInfo.BackgroundColor3 = Theme.Panel
+TargetInfo.BorderSizePixel = 0
+TargetInfo.Visible = false
+Instance.new("UICorner", TargetInfo).CornerRadius = UDim.new(0, 12)
+
+local TargetInfoStroke = Instance.new("UIStroke", TargetInfo)
+TargetInfoStroke.Color = Color3.fromRGB(0, 0, 0)
+TargetInfoStroke.Thickness = 1
+TargetInfoStroke.Transparency = 0.5
+
+local TargetAvatar = Instance.new("ImageLabel", TargetInfo)
+TargetAvatar.Size = UDim2.fromOffset(48, 48)
+TargetAvatar.Position = UDim2.fromOffset(10, 13)
+TargetAvatar.BackgroundColor3 = Theme.Button
+TargetAvatar.BorderSizePixel = 0
+Instance.new("UICorner", TargetAvatar).CornerRadius = UDim.new(1, 0)
+
+local TargetDisplay = Instance.new("TextLabel", TargetInfo)
+TargetDisplay.Size = UDim2.new(1, -68, 0, 18)
+TargetDisplay.Position = UDim2.fromOffset(64, 8)
+TargetDisplay.BackgroundTransparency = 1
+TargetDisplay.Font = Enum.Font.GothamBold
+TargetDisplay.TextSize = 12
+TargetDisplay.TextColor3 = Theme.Text
+TargetDisplay.TextXAlignment = Enum.TextXAlignment.Left
+
+local TargetUser = Instance.new("TextLabel", TargetInfo)
+TargetUser.Size = UDim2.new(1, -68, 0, 16)
+TargetUser.Position = UDim2.fromOffset(64, 26)
+TargetUser.BackgroundTransparency = 1
+TargetUser.Font = Enum.Font.Gotham
+TargetUser.TextSize = 11
+TargetUser.TextColor3 = Theme.SubText
+TargetUser.TextXAlignment = Enum.TextXAlignment.Left
+
+local TargetHealth = Instance.new("TextLabel", TargetInfo)
+TargetHealth.Size = UDim2.new(1, -68, 0, 16)
+TargetHealth.Position = UDim2.fromOffset(64, 42)
+TargetHealth.BackgroundTransparency = 1
+TargetHealth.Font = Enum.Font.Gotham
+TargetHealth.TextSize = 11
+TargetHealth.TextColor3 = Theme.Online
+TargetHealth.TextXAlignment = Enum.TextXAlignment.Left
+
+local TargetUserId = Instance.new("TextLabel", TargetInfo)
+TargetUserId.Size = UDim2.new(1, -68, 0, 16)
+TargetUserId.Position = UDim2.fromOffset(64, 56)
+TargetUserId.BackgroundTransparency = 1
+TargetUserId.Font = Enum.Font.Gotham
+TargetUserId.TextSize = 10
+TargetUserId.TextColor3 = Theme.SubText
+TargetUserId.TextXAlignment = Enum.TextXAlignment.Left
+
+--==================================================
 -- Main Window
 --==================================================
 
 local Main = Instance.new("Frame", ScreenGui)
-Main.Size = UDim2.fromScale(0.34, 0.46)
+Main.Size = UDim2.fromScale(0.34, 0.54)
 Main.Position = UDim2.fromScale(0.5, 0.5)
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.BackgroundColor3 = Theme.Main
@@ -203,7 +782,7 @@ local Subtitle = Instance.new("TextLabel", Header)
 Subtitle.Size = UDim2.new(1, -170, 0, 18)
 Subtitle.Position = UDim2.new(0, 14, 0, 30)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "a tool by Mars"
+Subtitle.Text = "a tool by Mars  |  [Insert] to toggle"
 Subtitle.Font = Enum.Font.Gotham
 Subtitle.TextSize = 11
 Subtitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -222,12 +801,12 @@ local function HeaderButton(text, offset)
 	b.BorderSizePixel = 0
 	Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
 	connect(b.MouseEnter, function() tween(b, { BackgroundColor3 = Theme.ButtonHover }, 0.1) end)
-	connect(b.MouseLeave, function() tween(b, { BackgroundColor3 = Theme.Button }, 0.1) end)
+	connect(b.MouseLeave, function() tween(b, { BackgroundColor3 = Theme.Button },      0.1) end)
 	return b
 end
 
 local Minimize = HeaderButton("–", -38)
-local Close = HeaderButton("×", -8)
+local Close    = HeaderButton("×", -8)
 
 local Body = Instance.new("Frame", Main)
 Body.Size = UDim2.new(1, -20, 1, -78)
@@ -246,14 +825,20 @@ Pages.BackgroundTransparency = 1
 local TabButtons, TabPages = {}, {}
 
 local function CreatePage(name)
-	local page = Instance.new("Frame", Pages)
+	local page = Instance.new("ScrollingFrame", Pages)
 	page.Size = UDim2.new(1, 0, 1, 0)
 	page.BackgroundTransparency = 1
 	page.Visible = false
+	page.ScrollBarThickness = 2
+	page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	page.BorderSizePixel = 0
 	local layout = Instance.new("UIListLayout", page)
 	layout.Padding = UDim.new(0, 10)
 	local pad = Instance.new("UIPadding", page)
 	pad.PaddingTop = UDim.new(0, 2)
+	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+		page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
+	end)
 	TabPages[name] = page
 	return page
 end
@@ -263,9 +848,7 @@ local function SwitchTab(name)
 		b.stroke.Transparency = 1
 		b.frame.BackgroundColor3 = Theme.Panel
 	end
-	for _, p in pairs(TabPages) do
-		p.Visible = false
-	end
+	for _, p in pairs(TabPages) do p.Visible = false end
 	TabButtons[name].stroke.Transparency = 0
 	TabButtons[name].frame.BackgroundColor3 = Theme.Button
 	TabPages[name].Visible = true
@@ -301,10 +884,10 @@ local function MakeTab(name, x)
 	CreatePage(name)
 end
 
-MakeTab("Main", 0)
-MakeTab("Visuals", 84)
+MakeTab("Main",     0)
+MakeTab("Visuals",  84)
 MakeTab("Settings", 168)
-MakeTab("Client", 252)
+MakeTab("Client",   252)
 SwitchTab("Main")
 
 --==================================================
@@ -335,6 +918,7 @@ local function Toggle(parent, text, default, callback)
 	local state = default
 	local function render()
 		b.Text = text .. " : " .. (state and "ON" or "OFF")
+		b.TextColor3 = state and Theme.Online or Theme.Text
 	end
 	render()
 
@@ -343,6 +927,8 @@ local function Toggle(parent, text, default, callback)
 		render()
 		callback(state)
 	end)
+
+	return function(v) state = v; render() end
 end
 
 local function Slider(parent, text, min, max, default, callback)
@@ -372,6 +958,8 @@ local function Slider(parent, text, min, max, default, callback)
 	fill.BorderSizePixel = 0
 	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
 
+	callback(default)
+
 	local dragging = false
 	connect(bar.InputBegan, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
@@ -379,7 +967,6 @@ local function Slider(parent, text, min, max, default, callback)
 	connect(UIS.InputEnded, function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
 	end)
-
 	connect(RunService.RenderStepped, function()
 		if Unloaded or not dragging then return end
 		local pct = math.clamp((UIS:GetMouseLocation().X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
@@ -401,9 +988,7 @@ local function Cycle(parent, text, options, defaultIndex, callback)
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
 
 	local idx = defaultIndex
-	local function render()
-		b.Text = text .. " : " .. options[idx]
-	end
+	local function render() b.Text = text .. " : " .. options[idx] end
 	render()
 	callback(idx)
 
@@ -425,6 +1010,33 @@ local function ActionButton(parent, text, callback)
 	b.BorderSizePixel = 0
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
 	connect(b.MouseButton1Click, callback)
+	return b
+end
+
+-- Small info row inside a card (label: value)
+local function InfoRow(parent, yOffset, labelText, valueText, valueColor)
+	local label = Instance.new("TextLabel", parent)
+	label.Size = UDim2.new(0.45, 0, 0, 16)
+	label.Position = UDim2.fromOffset(12, yOffset)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.Gotham
+	label.TextSize = 11
+	label.TextColor3 = Theme.SubText
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Text = labelText
+
+	local value = Instance.new("TextLabel", parent)
+	value.Size = UDim2.new(0.52, 0, 0, 16)
+	value.Position = UDim2.new(0.46, 0, 0, yOffset)
+	value.BackgroundTransparency = 1
+	value.Font = Enum.Font.GothamBold
+	value.TextSize = 11
+	value.TextColor3 = valueColor or Theme.Text
+	value.TextXAlignment = Enum.TextXAlignment.Right
+	value.Text = valueText
+	value.ClipsDescendants = false
+
+	return label, value
 end
 
 --==================================================
@@ -432,11 +1044,34 @@ end
 --==================================================
 
 Section(TabPages.Main, "AIM")
-Slider(TabPages.Main, "Aim FOV", 40, 300, AimFOV, function(v) AimFOV = v end)
-Slider(TabPages.Main, "Aim Strength", 1, 10, AimStrength, function(v) AimStrength = v end)
-Slider(TabPages.Main, "Prediction", 0, 30, 0, function(v) Prediction = v / 100 end)
-Cycle(TabPages.Main, "Aim Part", AimPartOptions, AimPartIndex, function(i) AimPartIndex = i end)
-Toggle(TabPages.Main, "Visible Check", false, function(v) VisibleCheck = v end)
+Toggle(TabPages.Main, "Aimbot", false, function(v)
+	AimbotEnabled = v
+	Notify("Aimbot", v and "Aimbot enabled" or "Aimbot disabled")
+end)
+Slider(TabPages.Main, "Aim FOV",          40,  300, AimFOV,         function(v) AimFOV = v end)
+Slider(TabPages.Main, "Aim Strength",      1,   10, AimStrength,    function(v) AimStrength = v end)
+Slider(TabPages.Main, "Aim Max Distance", 50, 2000, AimMaxDistance, function(v) AimMaxDistance = v end)
+Slider(TabPages.Main, "Prediction",        0,   30, 0,              function(v) Prediction = v / 100 end)
+Cycle( TabPages.Main, "Aim Part",   AimPartOptions,   AimPartIndex,   function(i) AimPartIndex = i end)
+Cycle( TabPages.Main, "Aim Method", AimMethodOptions, AimMethodIndex, function(i) AimMethodIndex = i end)
+Toggle(TabPages.Main, "Visible Check", false, function(v)
+	VisibleCheck = v
+	Notify("Visible Check", v and "Only targeting visible enemies" or "Visible check off")
+end)
+
+Section(TabPages.Main, "SILENT AIM")
+Toggle(TabPages.Main, "Silent Aim", false, function(v)
+	SilentAimEnabled = v
+	Notify("Silent Aim", v and "Silent aim enabled" or "Silent aim disabled")
+end)
+
+Section(TabPages.Main, "TRIGGERBOT")
+Toggle(TabPages.Main, "Triggerbot", false, function(v)
+	TriggerbotEnabled = v
+	Notify("Triggerbot", v and "Triggerbot enabled" or "Triggerbot disabled")
+end)
+Slider(TabPages.Main, "Trigger Delay ms",     0, 500, 50, function(v) TriggerbotDelay = v / 1000 end)
+Slider(TabPages.Main, "Trigger Threshold px", 2,  60, 12, function(v) TriggerbotThreshold = v end)
 
 --==================================================
 -- Visuals Tab
@@ -446,11 +1081,10 @@ Section(TabPages.Visuals, "ESP")
 Toggle(TabPages.Visuals, "Bone ESP", false, function(v)
 	BoneESPEnabled = v
 	if not v then
-		for _, lines in pairs(BoneLines) do
-			for _, l in pairs(lines) do l:Remove() end
-		end
+		for _, lines in pairs(BoneLines) do for _, l in pairs(lines) do l:Remove() end end
 		BoneLines = {}
 	end
+	Notify("ESP", v and "Bone ESP on" or "Bone ESP off")
 end)
 Toggle(TabPages.Visuals, "Tracers", false, function(v)
 	TracersEnabled = v
@@ -458,35 +1092,79 @@ Toggle(TabPages.Visuals, "Tracers", false, function(v)
 		for _, l in pairs(TracerLines) do l:Remove() end
 		TracerLines = {}
 	end
+	Notify("ESP", v and "Tracers on" or "Tracers off")
 end)
+Toggle(TabPages.Visuals, "Box ESP", false, function(v)
+	BoxESPEnabled = v
+	if not v then
+		for _, lines in pairs(BoxLines) do for _, l in pairs(lines) do l:Remove() end end
+		BoxLines = {}
+	end
+	Notify("ESP", v and "Box ESP on" or "Box ESP off")
+end)
+Toggle(TabPages.Visuals, "Name + Distance ESP", false, function(v)
+	NameESPEnabled = v
+	if not v then
+		for _, l in pairs(NameLabels) do if l then l:Remove() end end
+		NameLabels = {}
+	end
+	Notify("ESP", v and "Name ESP on" or "Name ESP off")
+end)
+Toggle(TabPages.Visuals, "Health Bar ESP", false, function(v)
+	HealthBarESPEnabled = v
+	if not v then
+		for _, l in pairs(HealthBarBGs)   do if l then l:Remove() end end
+		for _, l in pairs(HealthBarFills) do if l then l:Remove() end end
+		HealthBarBGs   = {}
+		HealthBarFills = {}
+	end
+	Notify("ESP", v and "Health bars on" or "Health bars off")
+end)
+Toggle(TabPages.Visuals, "Aim Target Info", false, function(v)
+	AimTargetInfoEnabled = v
+	Notify("Visuals", v and "Target info on" or "Target info off")
+end)
+
+Section(TabPages.Visuals, "RADAR")
+Toggle(TabPages.Visuals, "Radar", false, function(v)
+	RadarEnabled = v
+	RadarFrame.Visible = v
+	Notify("Radar", v and "Radar enabled" or "Radar disabled")
+end)
+Slider(TabPages.Visuals, "Radar Range", 50, 500, RadarRange, function(v) RadarRange = v end)
 
 --==================================================
 -- Settings Tab
 --==================================================
 
 Section(TabPages.Settings, "PLAYER")
-Slider(TabPages.Settings, "WalkSpeed", 16, 200, WalkSpeed, function(v) WalkSpeed = v end)
-Slider(TabPages.Settings, "Jump Power", 25, 200, JumpPower, function(v) JumpPower = v end)
-Slider(TabPages.Settings, "Camera FOV", 40, 120, CameraFOV, function(v) CameraFOV = v end)
+Slider(TabPages.Settings, "WalkSpeed",  16, 200, WalkSpeed,  function(v) WalkSpeed = v end)
+Slider(TabPages.Settings, "Jump Power", 25, 200, JumpPower,  function(v) JumpPower = v end)
+Slider(TabPages.Settings, "Camera FOV", 40, 120, CameraFOV,  function(v) CameraFOV = v end)
 
 Section(TabPages.Settings, "CFRAME MOVEMENT")
-Toggle(TabPages.Settings, "CFrame Move", false, function(v) CFrameMoveEnabled = v end)
-Slider(TabPages.Settings, "CFrame WalkSpeed", 8, 120, CFrameWalkSpeed, function(v) CFrameWalkSpeed = v end)
-Slider(TabPages.Settings, "CFrame JumpSpeed", 4, 80, CFrameJumpSpeed, function(v) CFrameJumpSpeed = v end)
+Toggle(TabPages.Settings, "CFrame Move", false, function(v)
+	CFrameMoveEnabled = v
+	Notify("Movement", v and "CFrame move on" or "CFrame move off")
+end)
+Slider(TabPages.Settings, "CFrame WalkSpeed",  8, 120, CFrameWalkSpeed, function(v) CFrameWalkSpeed = v end)
+Slider(TabPages.Settings, "CFrame JumpSpeed",  4,  80, CFrameJumpSpeed, function(v) CFrameJumpSpeed = v end)
 
 --==================================================
 -- Client Tab
+-- Expanded card + Session Stats card + Server Info card
 --==================================================
 
 local function isClientConnected()
-	local okDrawing = (Drawing ~= nil)
-	return okDrawing and LocalPlayer ~= nil
+	return (Drawing ~= nil) and (LocalPlayer ~= nil)
 end
 
 Section(TabPages.Client, "CLIENT")
 
+-- Main player card (expanded)
 local Card = Instance.new("Frame", TabPages.Client)
-Card.Size = UDim2.new(1, 0, 0, 192)
+Card.LayoutOrder = 1
+Card.Size = UDim2.new(1, 0, 0, 236)
 Card.BackgroundColor3 = Theme.Panel
 Card.BorderSizePixel = 0
 Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 12)
@@ -516,92 +1194,298 @@ UsernameLabel.TextSize = 12
 UsernameLabel.TextXAlignment = Enum.TextXAlignment.Left
 UsernameLabel.TextColor3 = Theme.SubText
 
-local UserIdLabel = Instance.new("TextLabel", Card)
-UserIdLabel.Size = UDim2.new(1, -24, 0, 18)
-UserIdLabel.Position = UDim2.new(0, 12, 0, 86)
-UserIdLabel.BackgroundTransparency = 1
-UserIdLabel.Font = Enum.Font.Gotham
-UserIdLabel.TextSize = 12
-UserIdLabel.TextXAlignment = Enum.TextXAlignment.Left
-UserIdLabel.TextColor3 = Theme.Text
+-- Divider
+local CardDiv1 = Instance.new("Frame", Card)
+CardDiv1.Size = UDim2.new(1, -24, 0, 1)
+CardDiv1.Position = UDim2.fromOffset(12, 84)
+CardDiv1.BackgroundColor3 = Theme.Bar
+CardDiv1.BorderSizePixel = 0
 
+-- Status row
 local StatusDot = Instance.new("Frame", Card)
-StatusDot.Size = UDim2.new(0, 10, 0, 10)
-StatusDot.Position = UDim2.new(0, 12, 0, 114)
+StatusDot.Size = UDim2.new(0, 8, 0, 8)
+StatusDot.Position = UDim2.fromOffset(12, 96)
 StatusDot.BorderSizePixel = 0
 Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
 
 local StatusLabel = Instance.new("TextLabel", Card)
-StatusLabel.Size = UDim2.new(1, -28, 0, 18)
-StatusLabel.Position = UDim2.new(0, 28, 0, 110)
+StatusLabel.Size = UDim2.new(1, -28, 0, 16)
+StatusLabel.Position = UDim2.fromOffset(26, 92)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Font = Enum.Font.GothamBold
-StatusLabel.TextSize = 12
+StatusLabel.TextSize = 11
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-local ExperienceLabel = Instance.new("TextLabel", Card)
-ExperienceLabel.Size = UDim2.new(1, -24, 0, 18)
-ExperienceLabel.Position = UDim2.new(0, 12, 0, 134)
-ExperienceLabel.BackgroundTransparency = 1
-ExperienceLabel.Font = Enum.Font.Gotham
-ExperienceLabel.TextSize = 12
-ExperienceLabel.TextXAlignment = Enum.TextXAlignment.Left
-ExperienceLabel.TextColor3 = Theme.Text
+-- Info rows
+local _, UserIdValue     = InfoRow(Card, 116, "User ID",      "...", Theme.Text)
+local _, AccountAgeValue = InfoRow(Card, 134, "Account Age",  getAccountAge(), Theme.SubText)
+local _, TeamValue       = InfoRow(Card, 152, "Team",         "None", Theme.SubText)
 
-local PlaceIdLabel = Instance.new("TextLabel", Card)
-PlaceIdLabel.Size = UDim2.new(1, -24, 0, 16)
-PlaceIdLabel.Position = UDim2.new(0, 12, 0, 154)
-PlaceIdLabel.BackgroundTransparency = 1
-PlaceIdLabel.Font = Enum.Font.Gotham
-PlaceIdLabel.TextSize = 11
-PlaceIdLabel.TextXAlignment = Enum.TextXAlignment.Left
-PlaceIdLabel.TextColor3 = Theme.SubText
+-- Divider
+local CardDiv2 = Instance.new("Frame", Card)
+CardDiv2.Size = UDim2.new(1, -24, 0, 1)
+CardDiv2.Position = UDim2.fromOffset(12, 174)
+CardDiv2.BackgroundColor3 = Theme.Bar
+CardDiv2.BorderSizePixel = 0
 
-local JobIdLabel = Instance.new("TextLabel", Card)
-JobIdLabel.Size = UDim2.new(1, -24, 0, 16)
-JobIdLabel.Position = UDim2.new(0, 12, 0, 170)
-JobIdLabel.BackgroundTransparency = 1
-JobIdLabel.Font = Enum.Font.Gotham
-JobIdLabel.TextSize = 11
-JobIdLabel.TextXAlignment = Enum.TextXAlignment.Left
-JobIdLabel.TextColor3 = Theme.SubText
+local _, ExperienceValue = InfoRow(Card, 182, "Experience",   "...", Theme.Text)
+local _, PlaceIdValue    = InfoRow(Card, 200, "Place ID",     tostring(game.PlaceId), Theme.SubText)
+local _, ServerIdValue   = InfoRow(Card, 218, "Server ID",    "...", Theme.SubText)
+
+-- Session Stats card
+local SessionCard = Instance.new("Frame", TabPages.Client)
+SessionCard.LayoutOrder = 2
+SessionCard.Size = UDim2.new(1, 0, 0, 136)
+SessionCard.BackgroundColor3 = Theme.Panel
+SessionCard.BorderSizePixel = 0
+Instance.new("UICorner", SessionCard).CornerRadius = UDim.new(0, 12)
+
+local SessionTitle = Instance.new("TextLabel", SessionCard)
+SessionTitle.Size = UDim2.new(1, -24, 0, 18)
+SessionTitle.Position = UDim2.fromOffset(12, 10)
+SessionTitle.BackgroundTransparency = 1
+SessionTitle.Font = Enum.Font.GothamBold
+SessionTitle.TextSize = 12
+SessionTitle.TextColor3 = Theme.Accent
+SessionTitle.TextXAlignment = Enum.TextXAlignment.Left
+SessionTitle.Text = "SESSION STATS"
+
+local SessionDiv = Instance.new("Frame", SessionCard)
+SessionDiv.Size = UDim2.new(1, -24, 0, 1)
+SessionDiv.Position = UDim2.fromOffset(12, 32)
+SessionDiv.BackgroundColor3 = Theme.Bar
+SessionDiv.BorderSizePixel = 0
+
+local _, SessionTimeValue   = InfoRow(SessionCard, 40,  "Time",    "0s",   Theme.Text)
+local _, SessionKillsValue  = InfoRow(SessionCard, 58,  "Kills",   "0",    Theme.HUDGood)
+local _, SessionDeathsValue = InfoRow(SessionCard, 76,  "Deaths",  "0",    Theme.HUDBad)
+local _, SessionKDValue     = InfoRow(SessionCard, 94,  "K/D",     "0.00", Theme.Text)
+local _, SessionFPSValue    = InfoRow(SessionCard, 112, "Avg FPS", "--",   Theme.SubText)
+
+-- Server Info card
+local ServerCard = Instance.new("Frame", TabPages.Client)
+ServerCard.LayoutOrder = 3
+ServerCard.Size = UDim2.new(1, 0, 0, 118)
+ServerCard.BackgroundColor3 = Theme.Panel
+ServerCard.BorderSizePixel = 0
+Instance.new("UICorner", ServerCard).CornerRadius = UDim.new(0, 12)
+
+local ServerTitle = Instance.new("TextLabel", ServerCard)
+ServerTitle.Size = UDim2.new(1, -24, 0, 18)
+ServerTitle.Position = UDim2.fromOffset(12, 10)
+ServerTitle.BackgroundTransparency = 1
+ServerTitle.Font = Enum.Font.GothamBold
+ServerTitle.TextSize = 12
+ServerTitle.TextColor3 = Theme.Accent
+ServerTitle.TextXAlignment = Enum.TextXAlignment.Left
+ServerTitle.Text = "SERVER INFO"
+
+local ServerDiv = Instance.new("Frame", ServerCard)
+ServerDiv.Size = UDim2.new(1, -24, 0, 1)
+ServerDiv.Position = UDim2.fromOffset(12, 32)
+ServerDiv.BackgroundColor3 = Theme.Bar
+ServerDiv.BorderSizePixel = 0
+
+local _, ServerPlayersValue = InfoRow(ServerCard, 40, "Players",    "-- / --", Theme.Text)
+local _, ServerPingValue    = InfoRow(ServerCard, 58, "Ping",       "--ms",    Theme.SubText)
+local _, ServerAgeValue     = InfoRow(ServerCard, 76, "Server Age", "--",      Theme.SubText)
+
+-- Player fill bar
+local FillBarBG = Instance.new("Frame", ServerCard)
+FillBarBG.Size = UDim2.new(1, -24, 0, 6)
+FillBarBG.Position = UDim2.fromOffset(12, 100)
+FillBarBG.BackgroundColor3 = Theme.Bar
+FillBarBG.BorderSizePixel = 0
+Instance.new("UICorner", FillBarBG).CornerRadius = UDim.new(1, 0)
+
+local FillBarFill = Instance.new("Frame", FillBarBG)
+FillBarFill.Size = UDim2.new(0, 0, 1, 0)
+FillBarFill.BackgroundColor3 = Theme.Accent
+FillBarFill.BorderSizePixel = 0
+Instance.new("UICorner", FillBarFill).CornerRadius = UDim.new(1, 0)
+
+-- Players list
+local PlayersSection = Instance.new("TextLabel", TabPages.Client)
+PlayersSection.LayoutOrder = 4
+PlayersSection.Size = UDim2.new(1, 0, 0, 16)
+PlayersSection.BackgroundTransparency = 1
+PlayersSection.Text = "PLAYERS"
+PlayersSection.Font = Enum.Font.GothamBold
+PlayersSection.TextSize = 12
+PlayersSection.TextColor3 = Theme.Accent
+PlayersSection.TextXAlignment = Enum.TextXAlignment.Left
+
+local PlayersList = Instance.new("ScrollingFrame", TabPages.Client)
+PlayersList.LayoutOrder = 5
+PlayersList.Size = UDim2.new(1, 0, 0, 180)
+PlayersList.BackgroundColor3 = Theme.Panel
+PlayersList.BorderSizePixel = 0
+PlayersList.ScrollBarThickness = 3
+PlayersList.CanvasSize = UDim2.new(0, 0, 0, 0)
+Instance.new("UICorner", PlayersList).CornerRadius = UDim.new(0, 12)
+
+local PlayersListLayout = Instance.new("UIListLayout", PlayersList)
+PlayersListLayout.Padding = UDim.new(0, 6)
+PlayersListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local PlayersPad = Instance.new("UIPadding", PlayersList)
+PlayersPad.PaddingTop    = UDim.new(0, 8)
+PlayersPad.PaddingBottom = UDim.new(0, 8)
+PlayersPad.PaddingLeft   = UDim.new(0, 8)
+PlayersPad.PaddingRight  = UDim.new(0, 8)
+
+connect(PlayersListLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+	PlayersList.CanvasSize = UDim2.new(0, 0, 0, PlayersListLayout.AbsoluteContentSize.Y + 14)
+end)
+
+local function refreshPlayersList()
+	for _, child in ipairs(PlayersList:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		local row = Instance.new("Frame", PlayersList)
+		row.Size = UDim2.new(1, -2, 0, 40)
+		row.BackgroundColor3 = Theme.Button
+		row.BorderSizePixel = 0
+		Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
+
+		local thumb = Instance.new("ImageLabel", row)
+		thumb.Size = UDim2.new(0, 30, 0, 30)
+		thumb.Position = UDim2.new(0, 6, 0.5, 0)
+		thumb.AnchorPoint = Vector2.new(0, 0.5)
+		thumb.BackgroundColor3 = Theme.Panel
+		thumb.BorderSizePixel = 0
+		Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+
+		local okThumb, content = pcall(function()
+			return Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+		end)
+		if okThumb and content then thumb.Image = content end
+
+		local name = Instance.new("TextLabel", row)
+		name.Size = UDim2.new(1, -48, 0, 18)
+		name.Position = UDim2.new(0, 42, 0, 4)
+		name.BackgroundTransparency = 1
+		name.Font = Enum.Font.GothamSemibold
+		name.TextSize = 12
+		name.TextColor3 = Theme.Text
+		name.TextXAlignment = Enum.TextXAlignment.Left
+		name.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
+
+		local id = Instance.new("TextLabel", row)
+		id.Size = UDim2.new(1, -48, 0, 14)
+		id.Position = UDim2.new(0, 42, 0, 22)
+		id.BackgroundTransparency = 1
+		id.Font = Enum.Font.Gotham
+		id.TextSize = 11
+		id.TextColor3 = Theme.SubText
+		id.TextXAlignment = Enum.TextXAlignment.Left
+		id.Text = "User ID: " .. tostring(plr.UserId)
+	end
+	PlayersList.CanvasSize = UDim2.new(0, 0, 0, PlayersListLayout.AbsoluteContentSize.Y + 14)
+end
+
+local serverStartTime = os.time()
 
 local function refreshClientCard()
 	NameLabel.Text = "Display Name: " .. (LocalPlayer.DisplayName or "Unknown")
 	UsernameLabel.Text = "Username: @" .. (LocalPlayer.Name or "Unknown")
-	UserIdLabel.Text = "User ID: " .. tostring(LocalPlayer.UserId or 0)
+	UserIdValue.Text = tostring(LocalPlayer.UserId or 0)
+	AccountAgeValue.Text = getAccountAge()
+
+	local teamName = "None"
+	local teamColor = Theme.SubText
+	if LocalPlayer.Team then
+		teamName = LocalPlayer.Team.Name
+		local tc = LocalPlayer.Team.TeamColor.Color
+		teamColor = tc
+	end
+	TeamValue.Text = teamName
+	TeamValue.TextColor3 = teamColor
 
 	local connected = isClientConnected()
 	StatusDot.BackgroundColor3 = connected and Theme.Online or Theme.Offline
-	StatusLabel.TextColor3 = connected and Theme.Online or Theme.Offline
-	StatusLabel.Text = connected and "● Online" or "● Offline"
+	StatusLabel.TextColor3     = connected and Theme.Online or Theme.Offline
+	StatusLabel.Text = connected and "● Connected" or "● Offline"
 
 	local ok, content = pcall(function()
 		return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
 	end)
-	if ok and content then
-		Avatar.Image = content
-	end
+	if ok and content then Avatar.Image = content end
 
 	local experienceName = game.Name or "Unknown"
 	local infoOk, info = pcall(function()
 		return MarketplaceService:GetProductInfo(game.PlaceId)
 	end)
-	if infoOk and info and info.Name then
-		experienceName = info.Name
-	end
+	if infoOk and info and info.Name then experienceName = info.Name end
+	ExperienceValue.Text = experienceName
 
-	ExperienceLabel.Text = "Experience: " .. experienceName
-	PlaceIdLabel.Text = "Place ID: " .. tostring(game.PlaceId)
+	PlaceIdValue.Text = tostring(game.PlaceId)
 	local shortJob = tostring(game.JobId or "N/A")
-	if #shortJob > 28 then
-		shortJob = string.sub(shortJob, 1, 28) .. "..."
-	end
-	JobIdLabel.Text = "Server ID: " .. shortJob
+	if #shortJob > 20 then shortJob = string.sub(shortJob, 1, 20) .. "..." end
+	ServerIdValue.Text = shortJob
+
+	-- Server info
+	local maxPlayers = Players.MaxPlayers
+	local curPlayers = #Players:GetPlayers()
+	ServerPlayersValue.Text = curPlayers .. " / " .. maxPlayers
+	local fillPct = math.clamp(curPlayers / math.max(maxPlayers, 1), 0, 1)
+	FillBarFill.Size = UDim2.new(fillPct, 0, 1, 0)
+
+	local serverAge = os.time() - serverStartTime
+	local sm = math.floor(serverAge / 60)
+	local ss = serverAge % 60
+	ServerAgeValue.Text = sm > 0 and (sm .. "m " .. ss .. "s") or (ss .. "s")
+
+	local ping = 0
+	pcall(function()
+		ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
+	end)
+	ServerPingValue.Text = ping .. "ms"
+	ServerPingValue.TextColor3 = getPingColor(ping)
+
+	refreshPlayersList()
 end
 
 refreshClientCard()
-ActionButton(TabPages.Client, "Refresh Client Status", refreshClientCard)
+
+local RefreshButton = ActionButton(TabPages.Client, "Refresh", refreshClientCard)
+RefreshButton.LayoutOrder = 6
+
+connect(Players.PlayerAdded, function(p)
+	refreshPlayersList()
+	Notify("Player Joined", p.DisplayName .. " (@" .. p.Name .. ")")
+end)
+connect(Players.PlayerRemoving, function(p)
+	refreshPlayersList()
+	Notify("Player Left", p.DisplayName .. " (@" .. p.Name .. ")")
+end)
+
+-- Periodically refresh server age + ping in client tab
+task.spawn(function()
+	while not Unloaded do
+		task.wait(5)
+		pcall(function()
+			local serverAge = os.time() - serverStartTime
+			local sm = math.floor(serverAge / 60)
+			local ss = serverAge % 60
+			ServerAgeValue.Text = sm > 0 and (sm .. "m " .. ss .. "s") or (ss .. "s")
+
+			local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
+			ServerPingValue.Text = ping .. "ms"
+			ServerPingValue.TextColor3 = getPingColor(ping)
+
+			local teamName = "None"
+			local teamColor = Theme.SubText
+			if LocalPlayer.Team then
+				teamName = LocalPlayer.Team.Name
+				teamColor = LocalPlayer.Team.TeamColor.Color
+			end
+			TeamValue.Text = teamName
+			TeamValue.TextColor3 = teamColor
+		end)
+	end
+end)
 
 --==================================================
 -- FOV Circle
@@ -624,15 +1508,42 @@ FStroke.Thickness = 1.5
 
 local BonesR15 = {
 	{ "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
-	{ "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
+	{ "UpperTorso", "LeftUpperArm" },  { "LeftUpperArm",  "LeftLowerArm" },  { "LeftLowerArm",  "LeftHand" },
 	{ "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
-	{ "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
+	{ "LowerTorso", "LeftUpperLeg" },  { "LeftUpperLeg",  "LeftLowerLeg" },  { "LeftLowerLeg",  "LeftFoot" },
 	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
 }
-
 local BonesR6 = {
-	{ "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" }, { "Torso", "Left Leg" }, { "Torso", "Right Leg" },
+	{ "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" },
+	{ "Torso", "Left Leg" }, { "Torso", "Right Leg" },
 }
+
+--==================================================
+-- Per-player CharacterAdded hooks
+--==================================================
+
+local CharacterConnections = {}
+
+local function hookPlayerCharacter(p)
+	if CharacterConnections[p] then
+		pcall(function() CharacterConnections[p]:Disconnect() end)
+	end
+	CharacterConnections[p] = p.CharacterAdded:Connect(function()
+		flushPlayerLines(p)
+	end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+	if p ~= LocalPlayer then hookPlayerCharacter(p) end
+end
+connect(Players.PlayerAdded,    function(p) hookPlayerCharacter(p) end)
+connect(Players.PlayerRemoving, function(p)
+	if CharacterConnections[p] then
+		pcall(function() CharacterConnections[p]:Disconnect() end)
+		CharacterConnections[p] = nil
+	end
+	flushPlayerLines(p)
+end)
 
 --==================================================
 -- Runtime
@@ -643,6 +1554,10 @@ connect(UIS.InputBegan, function(i, gp)
 	if i.UserInputType == Enum.UserInputType.MouseButton2 then
 		ADS = true
 		FOV.Visible = true
+	end
+	if i.KeyCode == Enum.KeyCode.Insert then
+		Main.Visible = not Main.Visible
+		Notify("Mars Solutions", Main.Visible and "Menu opened" or "Menu hidden  [Insert] to reopen")
 	end
 end)
 
@@ -660,22 +1575,20 @@ connect(RunService.RenderStepped, function(dt)
 	if char and char:FindFirstChildOfClass("Humanoid") then
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum.WalkSpeed ~= WalkSpeed then hum.WalkSpeed = WalkSpeed end
-		if hum.JumpPower ~= JumpPower then hum.JumpPower = JumpPower end
+		if hum.JumpPower  ~= JumpPower  then hum.JumpPower  = JumpPower  end
 	end
-	if Camera.FieldOfView ~= CameraFOV then
-		Camera.FieldOfView = CameraFOV
-	end
+	if Camera.FieldOfView ~= CameraFOV then Camera.FieldOfView = CameraFOV end
 
 	-- CFrame movement
 	if CFrameMoveEnabled and char and char:FindFirstChild("HumanoidRootPart") then
 		local hrp = char.HumanoidRootPart
 		local move = Vector3.zero
-		if UIS:IsKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
-		if UIS:IsKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
-		if UIS:IsKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
-		if UIS:IsKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
-		if UIS:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0, 1, 0) * CFrameJumpSpeed end
-		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0, 1, 0) * CFrameJumpSpeed end
+		if UIS:IsKeyDown(Enum.KeyCode.W)         then move += Camera.CFrame.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.S)         then move -= Camera.CFrame.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.A)         then move -= Camera.CFrame.RightVector end
+		if UIS:IsKeyDown(Enum.KeyCode.D)         then move += Camera.CFrame.RightVector end
+		if UIS:IsKeyDown(Enum.KeyCode.Space)     then move += Vector3.new(0,1,0) * CFrameJumpSpeed end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0,1,0) * CFrameJumpSpeed end
 		if move.Magnitude > 0 then
 			hrp.CFrame = hrp.CFrame + move.Unit * CFrameWalkSpeed * dt
 		end
@@ -687,19 +1600,49 @@ connect(RunService.RenderStepped, function(dt)
 	FOV.Position = UDim2.fromOffset(center.X, center.Y)
 
 	-- Aimbot
-	local target = getTarget()
-	if ADS and target then
-		local targetCF = CFrame.new(Camera.CFrame.Position, getAimPoint(target))
-		Camera.CFrame = Camera.CFrame:Lerp(targetCF, math.clamp(AimStrength / 10, 0.1, 1))
+	local target, targetPlayer = getTarget()
+	if AimbotEnabled and ADS and target then
+		local aimPoint = getAimPoint(target)
+		local targetCF = CFrame.new(Camera.CFrame.Position, aimPoint)
+		if AimMethodOptions[AimMethodIndex] == "Mouse" then
+			Camera.CFrame = targetCF
+		else
+			Camera.CFrame = Camera.CFrame:Lerp(targetCF, math.clamp(AimStrength / 10, 0.1, 1))
+		end
 	end
 
-	-- Bone ESP + Tracers
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and p.Team ~= LocalPlayer.Team then
-			local enemyChar = p.Character
-			local hum = enemyChar:FindFirstChildOfClass("Humanoid")
-			local root = enemyChar:FindFirstChild("HumanoidRootPart")
+	-- Triggerbot
+	if TriggerbotEnabled then
+		local tTarget = getCrosshairTarget()
+		if tTarget then
+			local now = tick()
+			if now - lastTriggerFire >= TriggerbotDelay then
+				lastTriggerFire = now
+				if typeof(mouse1click) == "function" then
+					mouse1click()
+				elseif typeof(mouse1press) == "function" then
+					mouse1press()
+					task.delay(0.06, function()
+						if typeof(mouse1release) == "function" then mouse1release() end
+					end)
+				end
+			end
+		end
+	end
 
+	-- ESP loop
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) and isEnemy(p) then
+			local enemyChar = p.Character
+			local hum  = enemyChar:FindFirstChildOfClass("Humanoid")
+			local root = enemyChar:FindFirstChild("HumanoidRootPart")
+			local head = enemyChar:FindFirstChild("Head")
+
+			-- World distance from local player
+			local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+			local worldDist = myRoot and root and (root.Position - myRoot.Position).Magnitude or 0
+
+			-- Bone ESP
 			if BoneESPEnabled and hum then
 				local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
 				BoneLines[p] = BoneLines[p] or {}
@@ -715,7 +1658,7 @@ connect(RunService.RenderStepped, function(dt)
 							line.Color = Theme.Accent
 							if av and bv then
 								line.From = Vector2.new(ap.X, ap.Y)
-								line.To = Vector2.new(bp.X, bp.Y)
+								line.To   = Vector2.new(bp.X, bp.Y)
 								line.Visible = true
 							else
 								line.Visible = false
@@ -727,6 +1670,7 @@ connect(RunService.RenderStepped, function(dt)
 				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
 			end
 
+			-- Tracers
 			if TracersEnabled and root then
 				local pos, vis = Camera:WorldToViewportPoint(root.Position)
 				TracerLines[p] = TracerLines[p] or newDrawingLine(1.6)
@@ -734,8 +1678,8 @@ connect(RunService.RenderStepped, function(dt)
 				if tr then
 					tr.Color = Theme.Accent
 					if vis then
-						tr.From = Vector2.new(center.X, Camera.ViewportSize.Y - 4)
-						tr.To = Vector2.new(pos.X, pos.Y)
+						tr.From = Vector2.new(center.X, center.Y)
+						tr.To   = Vector2.new(pos.X, pos.Y)
 						tr.Visible = true
 					else
 						tr.Visible = false
@@ -744,23 +1688,231 @@ connect(RunService.RenderStepped, function(dt)
 			elseif TracerLines[p] then
 				TracerLines[p].Visible = false
 			end
+
+			-- Box ESP
+			if BoxESPEnabled and hum then
+				local minX, minY, maxX, maxY = getCharacterBounds2D(enemyChar)
+				BoxLines[p] = BoxLines[p] or {
+					newDrawingLine(1.8), newDrawingLine(1.8),
+					newDrawingLine(1.8), newDrawingLine(1.8),
+				}
+				local lines = BoxLines[p]
+				if minX and lines then
+					local tl = Vector2.new(minX, minY)
+					local tr = Vector2.new(maxX, minY)
+					local br = Vector2.new(maxX, maxY)
+					local bl = Vector2.new(minX, maxY)
+					for _, line in ipairs(lines) do
+						if line then line.Color = Theme.Accent; line.Visible = true end
+					end
+					if lines[1] then lines[1].From, lines[1].To = tl, tr end
+					if lines[2] then lines[2].From, lines[2].To = tr, br end
+					if lines[3] then lines[3].From, lines[3].To = br, bl end
+					if lines[4] then lines[4].From, lines[4].To = bl, tl end
+				elseif lines then
+					for _, line in pairs(lines) do if line then line.Visible = false end end
+				end
+			elseif BoxLines[p] then
+				for _, line in pairs(BoxLines[p]) do if line then line.Visible = false end end
+			end
+
+			-- Name + Distance ESP
+			-- Renders above the character's head with color shifting by distance
+			if NameESPEnabled and head then
+				local headPos, headVis = Camera:WorldToViewportPoint(head.Position)
+				NameLabels[p] = NameLabels[p] or newDrawingText()
+				local lbl = NameLabels[p]
+				if lbl then
+					if headVis then
+						local distStr = string.format("[%d]", math.floor(worldDist + 0.5))
+						lbl.Text = p.DisplayName .. " " .. distStr
+						lbl.Color = distanceColor(worldDist)
+						lbl.Position = Vector2.new(headPos.X, headPos.Y - 18)
+						lbl.Center = true
+						lbl.Visible = true
+					else
+						lbl.Visible = false
+					end
+				end
+			elseif NameLabels[p] then
+				NameLabels[p].Visible = false
+			end
+
+			-- Health Bar ESP
+			-- Thin vertical bar to the left of the character bounding box
+			if HealthBarESPEnabled and hum then
+				local minX, minY, maxX, maxY = getCharacterBounds2D(enemyChar)
+				if minX then
+					local barX    = minX - 5
+					local barH    = maxY - minY
+					local hpPct   = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+					local fillH   = barH * hpPct
+
+					-- Background bar
+					HealthBarBGs[p] = HealthBarBGs[p] or newDrawingRect(true)
+					local bg = HealthBarBGs[p]
+					if bg then
+						bg.Color = Color3.fromRGB(30, 30, 30)
+						bg.Size = Vector2.new(4, barH)
+						bg.Position = Vector2.new(barX - 2, minY)
+						bg.Visible = true
+					end
+
+					-- Fill bar
+					HealthBarFills[p] = HealthBarFills[p] or newDrawingRect(true)
+					local fill = HealthBarFills[p]
+					if fill then
+						fill.Color = healthToColor(hpPct)
+						fill.Size = Vector2.new(4, fillH)
+						fill.Position = Vector2.new(barX - 2, minY + (barH - fillH))
+						fill.Visible = true
+					end
+				else
+					if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
+					if HealthBarFills[p] then HealthBarFills[p].Visible = false end
+				end
+			else
+				if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
+				if HealthBarFills[p] then HealthBarFills[p].Visible = false end
+			end
+
 		else
+			-- Player is not an enemy or is dead — hide all their drawings
 			if BoneLines[p] then
 				for _, line in pairs(BoneLines[p]) do if line then line.Visible = false end end
 			end
-			if TracerLines[p] then TracerLines[p].Visible = false end
+			if TracerLines[p]    then TracerLines[p].Visible    = false end
+			if BoxLines[p]       then for _, line in pairs(BoxLines[p]) do if line then line.Visible = false end end end
+			if NameLabels[p]     then NameLabels[p].Visible     = false end
+			if HealthBarBGs[p]   then HealthBarBGs[p].Visible   = false end
+			if HealthBarFills[p] then HealthBarFills[p].Visible = false end
 		end
 	end
-end)
 
-connect(Players.PlayerRemoving, function(p)
-	if BoneLines[p] then
-		for _, l in pairs(BoneLines[p]) do if l then l:Remove() end end
-		BoneLines[p] = nil
+	-- Aim Target Info
+	if AimTargetInfoEnabled and ADS and target and targetPlayer then
+		local targetChar = targetPlayer.Character
+		local targetHum  = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+		local root       = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+
+		if not root then
+			TargetInfo.Visible = false
+		else
+			local screenPos, onScreen = Camera:WorldToViewportPoint(root.Position)
+			if not onScreen then
+				TargetInfo.Visible = false
+			else
+				TargetInfo.Position = UDim2.fromOffset(
+					math.clamp(screenPos.X, 120, Camera.ViewportSize.X - 120),
+					math.clamp(screenPos.Y - 80, 80, Camera.ViewportSize.Y - 100)
+				)
+				local healthText = "Health: N/A"
+				if targetHum then
+					healthText = string.format("Health: %d / %d",
+						math.floor(targetHum.Health + 0.5),
+						math.floor(targetHum.MaxHealth + 0.5))
+				end
+				TargetDisplay.Text = "Display: " .. (targetPlayer.DisplayName or "Unknown")
+				TargetUser.Text    = "User: @"   .. (targetPlayer.Name or "Unknown")
+				TargetHealth.Text  = healthText
+				TargetUserId.Text  = "ID: "      .. tostring(targetPlayer.UserId or 0)
+
+				if not ThumbnailCache[targetPlayer.UserId] then
+					local ok, img = pcall(Players.GetUserThumbnailAsync, Players,
+						targetPlayer.UserId,
+						Enum.ThumbnailType.HeadShot,
+						Enum.ThumbnailSize.Size100x100)
+					if ok and img then ThumbnailCache[targetPlayer.UserId] = img end
+				end
+				TargetAvatar.Image = ThumbnailCache[targetPlayer.UserId] or ""
+				TargetInfo.Visible = true
+			end
+		end
+	else
+		TargetInfo.Visible = false
 	end
-	if TracerLines[p] then
-		TracerLines[p]:Remove()
-		TracerLines[p] = nil
+
+	-- Radar
+	if RadarEnabled then
+		local myChar = LocalPlayer.Character
+		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+		local dotIndex = 0
+		if myRoot then
+			local myPos   = myRoot.Position
+			local myYaw   = myRoot.CFrame.LookVector
+			local half    = RadarSize / 2
+			local forward = Vector3.new(myYaw.X, 0, myYaw.Z).Unit
+			local right   = Vector3.new(forward.Z, 0, -forward.X)
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= LocalPlayer and p.Character and isAliveCharacter(p.Character) then
+					local theirRoot = p.Character:FindFirstChild("HumanoidRootPart")
+					if theirRoot then
+						local diff = theirRoot.Position - myPos
+						if diff.Magnitude <= RadarRange then
+							dotIndex = dotIndex + 1
+							local dot = getRadarDot(dotIndex)
+							local flatDiff = Vector3.new(diff.X, 0, diff.Z)
+							local fx = flatDiff:Dot(right)
+							local fy = flatDiff:Dot(forward)
+							local scale = (half - 6) / RadarRange
+							dot.Position = UDim2.fromOffset(
+								math.clamp(half + fx * scale, 6, RadarSize - 6),
+								math.clamp(half - fy * scale, 6, RadarSize - 6)
+							)
+							dot.BackgroundColor3 = isEnemy(p) and Theme.RadarDot or Theme.RadarSelf
+							dot.Visible = true
+						end
+					end
+				end
+			end
+		end
+		for i = dotIndex + 1, #RadarDotPool do
+			RadarDotPool[i].Visible = false
+		end
+	end
+
+	-- HUD + session stats update (throttled)
+	local now = tick()
+	if now - lastHUDUpdate >= 0.25 then
+		lastHUDUpdate = now
+
+		table.insert(fpsBuffer, 1 / math.max(dt, 0.001))
+		if #fpsBuffer > fpsBufferSize then table.remove(fpsBuffer, 1) end
+		local sum = 0
+		for _, v in ipairs(fpsBuffer) do sum = sum + v end
+		local fps = math.floor(sum / #fpsBuffer + 0.5)
+
+		local ping = 0
+		pcall(function()
+			ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
+		end)
+
+		local playerCount = #Players:GetPlayers()
+
+		HUDFpsLabel.Text       = fps .. " FPS"
+		HUDFpsLabel.TextColor3 = getFPSColor(fps)
+		HUDPingLabel.Text      = ping .. "ms"
+		HUDPingLabel.TextColor3 = getPingColor(ping)
+		HUDPlayersLabel.Text   = playerCount .. " plrs"
+		HUDName.Text = LocalPlayer.DisplayName or "..."
+		HUDUser.Text = "@" .. (LocalPlayer.Name or "...")
+
+		-- Session stats on HUD bottom row
+		HUDStats.Text = "K/D: " .. getKD() .. "  T: " .. formatSessionTime()
+
+		-- Session stats card
+		SessionTimeValue.Text   = formatSessionTime()
+		SessionKillsValue.Text  = tostring(SessionKills)
+		SessionDeathsValue.Text = tostring(SessionDeaths)
+		SessionKDValue.Text     = getKD()
+		SessionFPSValue.Text    = fps .. " fps"
+		SessionFPSValue.TextColor3 = getFPSColor(fps)
+
+		-- Player fill bar in server card
+		local maxP = Players.MaxPlayers
+		local curP = #Players:GetPlayers()
+		FillBarFill.Size = UDim2.new(math.clamp(curP / math.max(maxP, 1), 0, 1), 0, 1, 0)
+		ServerPlayersValue.Text = curP .. " / " .. maxP
 	end
 end)
 
@@ -768,12 +1920,12 @@ end)
 -- Drag / Minimize / Close
 --==================================================
 
-local dragging, dragStart, startPos
+local dragging, dragStart, startPos = false, nil, nil
 connect(Header.InputBegan, function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton1 then
-		dragging = true
+		dragging  = true
 		dragStart = i.Position
-		startPos = Main.Position
+		startPos  = Main.Position
 	end
 end)
 connect(UIS.InputEnded, function(i)
@@ -782,12 +1934,15 @@ end)
 connect(UIS.InputChanged, function(i)
 	if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
 		local d = i.Position - dragStart
-		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		Main.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + d.X,
+			startPos.Y.Scale, startPos.Y.Offset + d.Y
+		)
 	end
 end)
 
 local minimized = false
-local full = Main.Size
+local full      = Main.Size
 local collapsed = UDim2.new(full.X.Scale, full.X.Offset, 0, Header.Size.Y.Offset)
 
 connect(Minimize.MouseButton1Click, function()
@@ -807,8 +1962,16 @@ local function unload()
 	if Unloaded then return end
 	Unloaded = true
 	clearAllDrawings()
+	for _, c in pairs(CharacterConnections) do
+		pcall(function() c:Disconnect() end)
+	end
+	table.clear(CharacterConnections)
 	disconnectAll()
 	ScreenGui:Destroy()
 end
 
 connect(Close.MouseButton1Click, unload)
+
+task.delay(0.5, function()
+	Notify("Mars Solutions", "v5 loaded. [Insert] to toggle menu.", 4)
+end)
