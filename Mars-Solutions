@@ -107,15 +107,6 @@ local CameraFOV         = 70
 local CFrameMoveEnabled = false
 local CFrameWalkSpeed   = 24
 local CFrameJumpSpeed   = 18
-local InfJumpEnabled    = false
-local ClickTPEnabled    = false
-
--- Hitbox
-local HitboxEnabled     = false
-local HitboxSize        = 8      -- studs, applied to HumanoidRootPart
-local HitboxVisualEnabled = false
-local HitboxParts       = {}     -- { player = SelectionBox }
-
 -- ESP
 local BoneESPEnabled    = false
 local TracersEnabled    = false
@@ -785,8 +776,9 @@ MainStroke.Color = Theme.Border; MainStroke.Thickness = 1
 --==================================================
 
 local IDENTITY_H = 30   -- top row: MARS / badges
-local TABBAR_H   = 32   -- bottom row: tab buttons
-local HEADER_H   = IDENTITY_H + TABBAR_H  -- 62px total
+local TABBAR_GAP = 2    -- prevents tab overlap with badge strip
+local TABBAR_H   = 30   -- bottom row: tab buttons
+local HEADER_H   = IDENTITY_H + TABBAR_GAP + TABBAR_H
 
 -- Outer header frame
 local Header = Instance.new("Frame", Main)
@@ -818,7 +810,7 @@ IdentityRow.BorderSizePixel  = 0
 -- Thin divider between rows
 local RowDiv = Instance.new("Frame", Header)
 RowDiv.Size             = UDim2.new(1, -24, 0, 1)
-RowDiv.Position         = UDim2.new(0, 12, 0, IDENTITY_H)
+RowDiv.Position         = UDim2.new(0, 12, 0, IDENTITY_H + 1)
 RowDiv.BackgroundColor3 = Theme.Separator
 RowDiv.BorderSizePixel  = 0
 
@@ -903,7 +895,7 @@ local BtnClose = WinBtn("×",  -6)
 -- ── Row 2: tab bar (30px, sits below identity row)
 local TabBarRow = Instance.new("Frame", Header)
 TabBarRow.Size             = UDim2.new(1, 0, 0, TABBAR_H)
-TabBarRow.Position         = UDim2.fromOffset(0, IDENTITY_H)
+TabBarRow.Position         = UDim2.fromOffset(0, IDENTITY_H + TABBAR_GAP)
 TabBarRow.BackgroundTransparency = 1
 TabBarRow.BorderSizePixel  = 0
 
@@ -1040,7 +1032,7 @@ end
 local function MakeTab(name, order)
     local btn = Instance.new("TextButton", TabButtonHolder)
     btn.LayoutOrder        = order
-    btn.Size               = UDim2.new(0, 68, 1, -6)
+    btn.Size               = UDim2.new(0, 72, 1, -4)
     btn.BackgroundTransparency = 1
     btn.Text               = name
     btn.Font               = Enum.Font.GothamMedium
@@ -1379,8 +1371,8 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     local itemCount = #options
     local listH = itemCount * 30 + 8
 
-    -- Dropdown list parented to Main (above PageContainer in ZIndex, no clip issues)
-    local dropList = Instance.new("Frame", Main)
+    -- Dropdown list parented to ScreenGui so clicks/update remain stable across tabs/scroll
+    local dropList = Instance.new("Frame", ScreenGui)
     dropList.Size             = UDim2.fromOffset(0, 0)
     dropList.BackgroundColor3 = Theme.Card
     dropList.BorderSizePixel  = 0
@@ -1425,7 +1417,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
             idx = i; btn.Text = opt; callback(i)
             for _, child in ipairs(dropList:GetChildren()) do
                 if child:IsA("TextButton") then
-                    child.TextColor3 = child.Text == opt and Theme.TextAccent or Theme.TextSecond
+                    child.TextColor3 = (child.LayoutOrder == i) and Theme.TextAccent or Theme.TextSecond
                 end
             end
             closeDropdown()
@@ -1438,13 +1430,9 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
             -- Read screen position each time (handles window moves)
             local ap  = btn.AbsolutePosition
             local as  = btn.AbsoluteSize
-            local mp  = Main.AbsolutePosition
             local w   = as.X
-            -- Position relative to Main so it stays inside Main's coordinate space
-            local relX = ap.X - mp.X
-            local relY = ap.Y - mp.Y + as.Y + 2
             dropList.Size     = UDim2.fromOffset(w, 0)
-            dropList.Position = UDim2.fromOffset(relX, relY)
+            dropList.Position = UDim2.fromOffset(ap.X, ap.Y + as.Y + 2)
             dropList.Visible  = true
             tween(dropList, {Size = UDim2.fromOffset(w, listH)}, 0.16)
             tween(chevron,  {Rotation = 180},                    0.16)
@@ -1728,32 +1716,6 @@ do
     end, 10)
     Slider(scroll, "Radar Range", 50, 500, 100, 10, function(v) RadarRange = v end, 11)
 
-    Section(scroll, "HITBOX", 12)
-    Checkbox(scroll, "Hitbox Expander", false, function(v)
-        HitboxEnabled = v
-        if not v then
-            -- Restore all hitboxes
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p.Character then
-                    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp and hrp:GetAttribute("_marsHitbox") then
-                        hrp.Size = Vector3.new(2, 2, 1)
-                        hrp:SetAttribute("_marsHitbox", nil)
-                    end
-                end
-            end
-        end
-        Notify("Hitbox", v and "Expander on" or "Expander off")
-    end, 13)
-    Slider(scroll, "Hitbox Size", 2, 20, 8, 1, function(v) HitboxSize = v end, 14)
-    Checkbox(scroll, "Hitbox Visualizer", false, function(v)
-        HitboxVisualEnabled = v
-        if not v then
-            for _, sb in pairs(HitboxParts) do pcall(function() sb:Destroy() end) end
-            HitboxParts = {}
-        end
-        Notify("Hitbox", v and "Visualizer on" or "Visualizer off")
-    end, 15)
 end
 
 -- ── MOVEMENT ────────────────────────────────────
@@ -1784,23 +1746,13 @@ do
     Slider(scroll, "Jump Power",  25, 200, 50,  1, function(v) JumpPower = v end, 3)
     Slider(scroll, "Camera FOV",  40, 120, 70,  1, function(v) CameraFOV = v end, 4)
 
-    Section(scroll, "ABILITIES", 5)
-    Checkbox(scroll, "Infinite Jump", false, function(v)
-        InfJumpEnabled = v
-        Notify("Movement", v and "Inf jump on" or "Inf jump off")
-    end, 6)
-    Checkbox(scroll, "Click TP", false, function(v)
-        ClickTPEnabled = v
-        Notify("Movement", v and "Click TP on — click ground to teleport" or "Click TP off")
-    end, 7)
-
-    Section(scroll, "CFRAME MOVEMENT", 8)
+    Section(scroll, "CFRAME MOVEMENT", 5)
     Checkbox(scroll, "CFrame Move", false, function(v)
         CFrameMoveEnabled = v
         Notify("Movement", v and "CFrame move on" or "CFrame move off")
-    end, 9)
-    Slider(scroll, "CFrame Speed", 8, 120, 24, 1, function(v) CFrameWalkSpeed = v end, 10)
-    Slider(scroll, "CFrame Jump",  4,  80, 18, 1, function(v) CFrameJumpSpeed = v end, 11)
+    end, 6)
+    Slider(scroll, "CFrame Speed", 8, 120, 24, 1, function(v) CFrameWalkSpeed = v end, 7)
+    Slider(scroll, "CFrame Jump",  4,  80, 18, 1, function(v) CFrameJumpSpeed = v end, 8)
 end
 
 -- ── PLAYERS ─────────────────────────────────────
@@ -2715,15 +2667,6 @@ connect(RunService.Heartbeat, function()
         if hum then
             if hum.WalkSpeed ~= WalkSpeed then hum.WalkSpeed = WalkSpeed end
             if hum.JumpPower  ~= JumpPower  then hum.JumpPower  = JumpPower  end
-            -- Inf jump: re-enable jump every frame
-            if InfJumpEnabled then
-                hum:SetAttribute("_marsJump", true)
-                if hum.FloorMaterial ~= Enum.Material.Air then
-                    -- grounded, reset so next space press works
-                elseif UIS:IsKeyDown(Enum.KeyCode.Space) then
-                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
-            end
         end
         if Camera.FieldOfView ~= CameraFOV then Camera.FieldOfView = CameraFOV end
 
@@ -2744,71 +2687,8 @@ connect(RunService.Heartbeat, function()
         end
     end
 
-    -- Hitbox expander: resize HumanoidRootPart on all enemies
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                if HitboxEnabled then
-                    hrp.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
-                    hrp.Transparency = 1
-                else
-                    -- Restore default (don't touch if we never changed it)
-                    if hrp:GetAttribute("_marsHitbox") then
-                        hrp.Size = Vector3.new(2, 2, 1)
-                        hrp:SetAttribute("_marsHitbox", nil)
-                    end
-                end
-                if HitboxEnabled then hrp:SetAttribute("_marsHitbox", true) end
-            end
-
-            -- Hitbox visualizer: SelectionBox on HumanoidRootPart
-            if HitboxVisualEnabled then
-                if not HitboxParts[p] then
-                    local sb = Instance.new("SelectionBox")
-                    sb.Color3 = Theme.Accent
-                    sb.LineThickness = 0.04
-                    sb.SurfaceTransparency = 0.8
-                    sb.SurfaceColor3 = Theme.Accent
-                    sb.Parent = workspace
-                    HitboxParts[p] = sb
-                end
-                local hrp2 = p.Character:FindFirstChild("HumanoidRootPart")
-                HitboxParts[p].Adornee = hrp2
-            else
-                if HitboxParts[p] then
-                    HitboxParts[p]:Destroy()
-                    HitboxParts[p] = nil
-                end
-            end
-        else
-            if HitboxParts[p] then
-                HitboxParts[p]:Destroy()
-                HitboxParts[p] = nil
-            end
-        end
-    end
 end)
 
--- Click TP: teleport to wherever you click on the ground
-connect(UIS.InputBegan, function(i, gp)
-    if gp then return end
-    if not ClickTPEnabled then return end
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        local char = LocalPlayer.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-        local unitRay = Camera:ScreenPointToRay(
-            UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Blacklist
-        params.FilterDescendantsInstances = { char }
-        local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
-        if result then
-            hrp.CFrame = CFrame.new(result.Position + Vector3.new(0, 3, 0))
-        end
-    end
-end)
 
 --==================================================
 -- Stepped  →  ESP + Radar  (every 2 frames)
