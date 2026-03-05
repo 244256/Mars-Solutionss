@@ -981,15 +981,15 @@ end
 -- We use a sub-frame so they don't interfere with the UIListLayout-free header.
 local TabButtonHolder = Instance.new("Frame", Header)
 TabButtonHolder.BackgroundTransparency = 1
-TabButtonHolder.Size       = UDim2.new(0, 300, 1, 0)
-TabButtonHolder.Position   = UDim2.new(0.5, 0, 0, 0)
-TabButtonHolder.AnchorPoint = Vector2.new(0.5, 0)
+TabButtonHolder.Size       = UDim2.new(1, -332, 1, 0)
+TabButtonHolder.Position   = UDim2.fromOffset(252, 0)
+TabButtonHolder.AnchorPoint = Vector2.new(0, 0)
 
 local TabLayout = Instance.new("UIListLayout", TabButtonHolder)
 TabLayout.FillDirection       = Enum.FillDirection.Horizontal
 TabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 TabLayout.VerticalAlignment   = Enum.VerticalAlignment.Center
-TabLayout.Padding             = UDim.new(0, 0)
+TabLayout.Padding             = UDim.new(0, 2)
 TabLayout.SortOrder           = Enum.SortOrder.LayoutOrder
 
 -- Page container starts right below the header
@@ -1005,6 +1005,25 @@ local TabButtons = {}
 local TabPages   = {}
 local activeTab  = nil
 
+local function UpdateTabButtonSizes()
+    local tabCount = 0
+    for _ in pairs(TabButtons) do tabCount += 1 end
+    if tabCount == 0 then return end
+
+    local spacing = TabLayout.Padding.Offset
+    local available = math.max(TabButtonHolder.AbsoluteSize.X - spacing * (tabCount - 1), tabCount * 34)
+    local width = math.floor(available / tabCount)
+    for _, btn in pairs(TabButtons) do
+        btn.Size = UDim2.new(0, width, 1, -10)
+    end
+
+    if activeTab and TabButtons[activeTab] then
+        local btn = TabButtons[activeTab]
+        TabUnderline.Position = UDim2.new(0, btn.AbsolutePosition.X - Header.AbsolutePosition.X, 1, -2)
+        TabUnderline.Size = UDim2.fromOffset(btn.AbsoluteSize.X, 2)
+    end
+end
+
 local function CreatePage(name)
     local page = Instance.new("Frame", PageContainer)
     page.Size             = UDim2.new(1, 0, 1, 0)
@@ -1017,7 +1036,7 @@ end
 local function MakeTab(name, order)
     local btn = Instance.new("TextButton", TabButtonHolder)
     btn.LayoutOrder        = order
-    btn.Size               = UDim2.new(0, 76, 1, -8)
+    btn.Size               = UDim2.new(0, 64, 1, -10)
     btn.BackgroundTransparency = 1
     btn.Text               = name
     btn.Font               = Enum.Font.GothamMedium
@@ -1040,6 +1059,8 @@ local function MakeTab(name, order)
         for n, p in pairs(TabPages) do p.Visible = n == name end
         activeTab = name
     end)
+
+    UpdateTabButtonSizes()
 end
 
 MakeTab("Combat",   1)
@@ -1048,6 +1069,9 @@ MakeTab("Movement", 3)
 MakeTab("Players",  4)
 MakeTab("Config",   5)
 MakeTab("Client",   6)
+
+connect(TabButtonHolder:GetPropertyChangedSignal("AbsoluteSize"), UpdateTabButtonSizes)
+connect(Header:GetPropertyChangedSignal("AbsoluteSize"), UpdateTabButtonSizes)
 
 --==================================================
 -- Footer bar
@@ -1319,6 +1343,7 @@ end
 
 -- Dropdown
 -- dropList is parented to ScreenGui so it always renders above scroll frames
+local ActiveDropdownCloser = nil
 local function Dropdown(parent, text, options, defaultIndex, callback, order)
     local container = Instance.new("Frame", parent)
     container.Size             = UDim2.new(1, 0, 0, 46)
@@ -1338,10 +1363,17 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     btn.BackgroundColor3 = Theme.Input; btn.BorderSizePixel = 0
     btn.Font             = Enum.Font.Gotham; btn.TextSize = 12
     btn.TextColor3       = Theme.TextPrimary; btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.Text             = ""
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
 
-    local btnPad = Instance.new("UIPadding", btn)
-    btnPad.PaddingLeft = UDim.new(0, 10)
+    local selectedLabel = Instance.new("TextLabel", btn)
+    selectedLabel.Size = UDim2.new(1, -32, 1, 0)
+    selectedLabel.Position = UDim2.fromOffset(10, 0)
+    selectedLabel.BackgroundTransparency = 1
+    selectedLabel.Font = Enum.Font.Gotham
+    selectedLabel.TextSize = 12
+    selectedLabel.TextColor3 = Theme.TextPrimary
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
 
     local chevron = Instance.new("TextLabel", btn)
     chevron.Size               = UDim2.fromOffset(20, 26)
@@ -1349,9 +1381,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     chevron.BackgroundTransparency = 1; chevron.Font = Enum.Font.GothamBold
     chevron.TextSize           = 11; chevron.TextColor3 = Theme.TextDim; chevron.Text = "▾"
 
-    local idx = defaultIndex
-    btn.Text = options[idx]
-    callback(idx)
+    local idx = math.clamp(defaultIndex or 1, 1, #options)
 
     local itemCount = #options
     local listH = itemCount * 30 + 8
@@ -1382,6 +1412,20 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         task.delay(0.14, function() dropList.Visible = false end)
         tween(chevron, {Rotation = 0}, 0.14)
         open = false
+        if ActiveDropdownCloser == closeDropdown then
+            ActiveDropdownCloser = nil
+        end
+    end
+
+    local function setSelection(nextIdx)
+        idx = math.clamp(nextIdx, 1, #options)
+        selectedLabel.Text = options[idx] or ""
+        callback(idx)
+        for _, child in ipairs(dropList:GetChildren()) do
+            if child:IsA("TextButton") then
+                child.TextColor3 = (child.LayoutOrder == idx) and Theme.TextAccent or Theme.TextSecond
+            end
+        end
     end
 
     for i, opt in ipairs(options) do
@@ -1399,19 +1443,19 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         connect(item.MouseEnter, function() tween(item, {BackgroundColor3 = Theme.ButtonHover}, 0.1) end)
         connect(item.MouseLeave, function() tween(item, {BackgroundColor3 = Theme.Button},      0.1) end)
         connect(item.MouseButton1Click, function()
-            idx = i; btn.Text = opt; callback(i)
-            for _, child in ipairs(dropList:GetChildren()) do
-                if child:IsA("TextButton") then
-                    child.TextColor3 = child.Text == opt and Theme.TextAccent or Theme.TextSecond
-                end
-            end
+            setSelection(i)
             closeDropdown()
         end)
     end
 
+    setSelection(idx)
+
     connect(btn.MouseButton1Click, function()
         open = not open
         if open then
+            if ActiveDropdownCloser and ActiveDropdownCloser ~= closeDropdown then
+                ActiveDropdownCloser()
+            end
             -- Read screen position each time (handles window moves)
             local ap  = btn.AbsolutePosition
             local as  = btn.AbsoluteSize
@@ -1425,6 +1469,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
             dropList.Visible  = true
             tween(dropList, {Size = UDim2.fromOffset(w, listH)}, 0.16)
             tween(chevron,  {Rotation = 180},                    0.16)
+            ActiveDropdownCloser = closeDropdown
         else
             closeDropdown()
         end
