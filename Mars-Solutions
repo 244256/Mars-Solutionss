@@ -426,12 +426,34 @@ end
 -- ScreenGui
 --==================================================
 
+local function resolveGuiParent()
+    if typeof(gethui) == "function" then
+        local ok, hui = pcall(gethui)
+        if ok and hui then return hui end
+    end
+
+    local coreGui = game:GetService("CoreGui")
+    local okCore = pcall(function()
+        local probe = Instance.new("Folder")
+        probe.Name = "_marsProbe"
+        probe.Parent = coreGui
+        probe:Destroy()
+    end)
+    if okCore then
+        return coreGui
+    end
+
+    local pg = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pg then return pg end
+    return coreGui
+end
+
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name          = "MarsSolutions_v5"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ResetOnSpawn  = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent        = game:GetService("CoreGui")
+ScreenGui.Parent        = resolveGuiParent()
 
 --==================================================
 -- Notification System  (with progress bar)
@@ -784,9 +806,10 @@ MainStroke.Color = Theme.Border; MainStroke.Thickness = 1
 -- Header — two rows: identity strip + tab bar
 --==================================================
 
-local IDENTITY_H = 30   -- top row: MARS / badges
-local TABBAR_H   = 32   -- bottom row: tab buttons
-local HEADER_H   = IDENTITY_H + TABBAR_H  -- 62px total
+local IDENTITY_H = 30   -- top row: title / badges
+local TABBAR_GAP = 2    -- keeps tabs clear of badge strip
+local TABBAR_H   = 30   -- bottom row: tab buttons
+local HEADER_H   = IDENTITY_H + TABBAR_GAP + TABBAR_H
 
 -- Outer header frame
 local Header = Instance.new("Frame", Main)
@@ -818,7 +841,7 @@ IdentityRow.BorderSizePixel  = 0
 -- Thin divider between rows
 local RowDiv = Instance.new("Frame", Header)
 RowDiv.Size             = UDim2.new(1, -24, 0, 1)
-RowDiv.Position         = UDim2.new(0, 12, 0, IDENTITY_H)
+RowDiv.Position         = UDim2.new(0, 12, 0, IDENTITY_H + 1)
 RowDiv.BackgroundColor3 = Theme.Separator
 RowDiv.BorderSizePixel  = 0
 
@@ -903,7 +926,7 @@ local BtnClose = WinBtn("×",  -6)
 -- ── Row 2: tab bar (30px, sits below identity row)
 local TabBarRow = Instance.new("Frame", Header)
 TabBarRow.Size             = UDim2.new(1, 0, 0, TABBAR_H)
-TabBarRow.Position         = UDim2.fromOffset(0, IDENTITY_H)
+TabBarRow.Position         = UDim2.fromOffset(0, IDENTITY_H + TABBAR_GAP)
 TabBarRow.BackgroundTransparency = 1
 TabBarRow.BorderSizePixel  = 0
 
@@ -1040,7 +1063,7 @@ end
 local function MakeTab(name, order)
     local btn = Instance.new("TextButton", TabButtonHolder)
     btn.LayoutOrder        = order
-    btn.Size               = UDim2.new(0, 68, 1, -6)
+    btn.Size               = UDim2.new(0, 72, 1, -4)
     btn.BackgroundTransparency = 1
     btn.Text               = name
     btn.Font               = Enum.Font.GothamMedium
@@ -1613,7 +1636,7 @@ do
 
     Section(A, "SETTINGS", 5)
     Slider(A, "FOV",          40, 300, AimFOV,         1,   function(v) AimFOV = v end, 6)
-    Slider(A, "Smoothing",     1,  10, AimStrength,    1,   function(v) AimStrength = 11 - v end, 7)
+    Slider(A, "Smoothing",     1,  10, AimStrength,    1,   function(v) AimStrength = v end, 7)
     Slider(A, "Max Distance", 50, 2000, AimMaxDistance, 50, function(v) AimMaxDistance = v end, 8)
     Slider(A, "Prediction",    0,  30, 0,              1,   function(v) Prediction = v / 100 end, 9)
     Dropdown(A, "Hit Part",   AimPartOptions,   1, function(i) AimPartIndex = i end, 10)
@@ -2008,13 +2031,11 @@ do
     end
 
     -- ── Preset definitions
-    -- ghost: legit, low-key, undetectable feel
-    -- drift: moderate, balanced
-    -- nova:  full rage, max values
+    -- Tuned presets with clearer naming and intent
     local Presets = {
         {
             name  = "Recon",
-            desc  = "Low FOV, vis check on, no triggers",
+            desc  = "Conservative aim assist with safety checks",
             color = Color3.fromRGB(100, 200, 255),  -- ice blue
             state = {
                 AimbotEnabled = true, AimFOV = 60, AimStrength = 3,
@@ -2028,7 +2049,7 @@ do
         },
         {
             name  = "Loaded",
-            desc  = "Silent aim, triggerbot, full ESP",
+            desc  = "Balanced all-round setup for regular matches",
             color = Color3.fromRGB(255, 165, 50),   -- warm amber
             state = {
                 AimbotEnabled = true, AimFOV = 130, AimStrength = 6,
@@ -2043,7 +2064,7 @@ do
         },
         {
             name  = "Overkill",
-            desc  = "Everything on, max values, no checks",
+            desc  = "Aggressive profile with minimal restrictions",
             color = Color3.fromRGB(220, 50, 50),    -- red
             state = {
                 AimbotEnabled = true, AimFOV = 300, AimStrength = 10,
@@ -2611,7 +2632,7 @@ connect(RunService.RenderStepped, function(dt)
         if AimMethodOptions[AimMethodIndex] == "Mouse" then
             Camera.CFrame = targetCF
         else
-            Camera.CFrame = Camera.CFrame:Lerp(targetCF, math.clamp(AimStrength / 10, 0.08, 1))
+            Camera.CFrame = Camera.CFrame:Lerp(targetCF, math.clamp((11 - AimStrength) / 10, 0.08, 0.95))
         end
         -- Pulse FOV circle when target acquired
         tween(FOVStroke, { Transparency = 0.15 }, 0.06)
