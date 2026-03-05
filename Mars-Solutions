@@ -112,21 +112,39 @@ local CFrameJumpSpeed   = 18
 local BoneESPEnabled    = false
 local TracersEnabled    = false
 local BoxESPEnabled     = false
+local HealthBarEnabled  = false
 local AimTargetInfoEnabled = false
 local RadarEnabled      = false
 local RadarRange        = 100
+
+-- Rainbow
+local RainbowEnabled    = false
+local rainbowHue        = 0
+local HealthBarLines    = {}
 
 -- Drawing pools
 local BoneLines   = {}
 local TracerLines = {}
 local BoxLines    = {}
 
+-- Silent Aim hook
+local SAHooked           = false
+local SAOriginalNamecall = nil
+
+-- Session
+local SessionStart = tick()
+local SessionLog   = {}
+local function logSession(msg)
+    table.insert(SessionLog, { t = tick() - SessionStart, msg = msg })
+    if #SessionLog > 40 then table.remove(SessionLog, 1) end
+end
+
 -- Misc
-local Connections         = {}
+local Connections          = {}
 local CharacterConnections = {}
-local Unloaded            = false
-local ThumbnailCache      = {}
-local steppedFrame        = 0
+local Unloaded             = false
+local ThumbnailCache       = {}
+local steppedFrame         = 0
 
 --==================================================
 -- Helpers
@@ -157,7 +175,11 @@ local function clearAllDrawings()
     for _, lines in pairs(BoxLines) do
         for _, l in pairs(lines) do pcall(function() l:Remove() end) end
     end
-    BoneLines = {} TracerLines = {} BoxLines = {}
+    for _, hb in pairs(HealthBarLines) do
+        pcall(function() hb.bg:Remove() end)
+        pcall(function() hb.fill:Remove() end)
+    end
+    BoneLines = {} TracerLines = {} BoxLines = {} HealthBarLines = {}
 end
 
 local function flushPlayerLines(p)
@@ -173,6 +195,19 @@ local function flushPlayerLines(p)
         for _, l in pairs(BoxLines[p]) do pcall(function() l:Remove() end) end
         BoxLines[p] = nil
     end
+    if HealthBarLines[p] then
+        pcall(function() HealthBarLines[p].bg:Remove() end)
+        pcall(function() HealthBarLines[p].fill:Remove() end)
+        HealthBarLines[p] = nil
+    end
+end
+
+-- Rainbow: returns current hue-cycled color, or Theme.Accent if rainbow off
+local function espColor()
+    if RainbowEnabled then
+        return Color3.fromHSV(rainbowHue, 1, 1)
+    end
+    return Theme.Accent
 end
 
 local function isAlive(char)
@@ -283,6 +318,98 @@ local function getCrosshairTarget()
         end
     end
     return nil, nil
+end
+
+-- Silent Aim target picker (separate FOV + optional checks)
+local function getSilentTarget()
+    local center = Camera.ViewportSize / 2
+    local best, bestDist = nil, SilentAimFOV
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and isAlive(p.Character) then
+            if SilentTeamCheck and not isEnemy(p) then continue end
+            local part = p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart")
+            if part then
+                if SilentVisCheck then
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Blacklist
+                    params.FilterDescendantsInstances = { LocalPlayer.Character }
+                    local hit = workspace:Raycast(Camera.CFrame.Position, part.Position - Camera.CFrame.Position, params)
+                    if hit and not hit.Instance:IsDescendantOf(p.Character) then continue end
+                end
+                local pos, vis = Camera:WorldToViewportPoint(part.Position)
+                if vis then
+                    local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                    if d < bestDist then bestDist = d; best = part end
+                end
+            end
+        end
+    end
+    return best
+end
+
+--==================================================
+-- Silent Aim  —  __namecall hook
+-- Works on low-UNC executors: hooks WorldToScreenPoint
+-- on the Camera metatable to redirect bullet origin.
+-- Falls back to a pure camera-space spoof if namecall
+-- is unavailable.
+--==================================================
+
+local function hookSilentAim()
+    if SAHooked then return end
+
+    -- Method 1: __namecall metatable hook (best, most executors)
+    local ok = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNamecall = mt.__namecall
+        SAOriginalNamecall = oldNamecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            -- Intercept FireServer / InvokeServer on RemoteEvent/RemoteFunction
+            -- Redirect WorldToScreenPoint so the server thinks we aimed at target
+            if SilentAimEnabled and (method == "FireServer" or method == "InvokeServer") then
+                local target = getSilentTarget()
+                if target then
+                    -- Temporarily snap camera toward target for this call only
+                    local oldCF = Camera.CFrame
+                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Position)
+                    local result = { oldNamecall(self, ...) }
+                    Camera.CFrame = oldCF
+                    return table.unpack(result)
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+
+    if ok then
+        SAHooked = true
+        logSession("Silent Aim: __namecall hook active")
+        return
+    end
+
+    -- Method 2: Camera WorldToScreenPoint spoof (lower UNC fallback)
+    -- On each RenderStepped while silent aim is on, we nudge Camera.CFrame
+    -- toward the target for exactly one frame so raycasts originate there.
+    -- This is the safest low-UNC approach.
+    SAHooked = true
+    logSession("Silent Aim: camera-spoof mode (low UNC)")
+end
+
+local function unhookSilentAim()
+    if not SAHooked then return end
+    pcall(function()
+        if SAOriginalNamecall then
+            local mt = getrawmetatable(game)
+            setreadonly(mt, false)
+            mt.__namecall = SAOriginalNamecall
+            setreadonly(mt, true)
+            SAOriginalNamecall = nil
+        end
+    end)
+    SAHooked = false
 end
 
 --==================================================
@@ -1404,6 +1531,11 @@ do
 
     local layout = Instance.new("UIListLayout", scroll)
     layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 8)
+    scrollPad.PaddingRight  = UDim.new(0, 8)
+    scrollPad.PaddingTop    = UDim.new(0, 6)
+    scrollPad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
@@ -1433,7 +1565,9 @@ do
     Section(S, "SILENT AIM", 1)
     Checkbox(S, "Enabled",       false, function(v)
         SilentAimEnabled = v
-        Notify("Silent Aim", v and "Enabled" or "Disabled")
+        if v then hookSilentAim() else unhookSilentAim() end
+        logSession("Silent Aim " .. (v and "ON" or "OFF"))
+        Notify("Silent Aim", v and "Enabled — hook active" or "Disabled")
     end, 2)
     Checkbox(S, "Team Check",    true,  function(v) SilentTeamCheck = v end, 3)
     Checkbox(S, "Visible Check", false, function(v) SilentVisCheck  = v end, 4)
@@ -1447,6 +1581,7 @@ do
     Section(T, "TRIGGERBOT", 1)
     Checkbox(T, "Enabled",       false, function(v)
         TriggerbotEnabled = v
+        logSession("Triggerbot " .. (v and "ON" or "OFF"))
         Notify("Triggerbot", v and "Enabled" or "Disabled")
     end, 2)
     Checkbox(T, "Team Check",    true,  function(v) TriggerbotTeamCheck = v end, 3)
@@ -1471,6 +1606,11 @@ do
 
     local layout = Instance.new("UIListLayout", scroll)
     layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 8)
+    scrollPad.PaddingRight  = UDim.new(0, 8)
+    scrollPad.PaddingTop    = UDim.new(0, 6)
+    scrollPad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
@@ -1479,29 +1619,54 @@ do
     Checkbox(scroll, "Bone ESP", false, function(v)
         BoneESPEnabled = v
         if not v then for _, ls in pairs(BoneLines) do for _, l in pairs(ls) do if l then l.Visible = false end end end end
+        logSession("Bone ESP " .. (v and "ON" or "OFF"))
         Notify("ESP", v and "Bone ESP on" or "Bone ESP off")
     end, 2)
     Checkbox(scroll, "Box ESP", false, function(v)
         BoxESPEnabled = v
-        if not v then for _, ls in pairs(BoxLines) do for _, l in pairs(ls) do if l then l.Visible = false end end end end
+        if not v then
+            for _, ls in pairs(BoxLines) do for _, l in pairs(ls) do if l then l.Visible = false end end end
+            for _, hb in pairs(HealthBarLines) do
+                pcall(function() hb.bg.Visible = false end)
+                pcall(function() hb.fill.Visible = false end)
+            end
+        end
+        logSession("Box ESP " .. (v and "ON" or "OFF"))
         Notify("ESP", v and "Box ESP on" or "Box ESP off")
     end, 3)
+    Checkbox(scroll, "Health Bars", false, function(v)
+        HealthBarEnabled = v
+        if not v then
+            for _, hb in pairs(HealthBarLines) do
+                pcall(function() hb.bg.Visible = false end)
+                pcall(function() hb.fill.Visible = false end)
+            end
+        end
+        Notify("ESP", v and "Health bars on" or "Health bars off")
+    end, 4)
     Checkbox(scroll, "Tracers", false, function(v)
         TracersEnabled = v
         if not v then for _, l in pairs(TracerLines) do if l then l.Visible = false end end end
+        logSession("Tracers " .. (v and "ON" or "OFF"))
         Notify("ESP", v and "Tracers on" or "Tracers off")
-    end, 4)
+    end, 5)
     Checkbox(scroll, "Target Info (ADS)", false, function(v)
         AimTargetInfoEnabled = v
         Notify("Visuals", v and "Target info on" or "Target info off")
-    end, 5)
+    end, 6)
 
-    Section(scroll, "RADAR", 6)
+    Section(scroll, "RAINBOW", 7)
+    Checkbox(scroll, "Rainbow Mode", false, function(v)
+        RainbowEnabled = v
+        Notify("Visuals", v and "Rainbow mode on — all ESP cycles hue" or "Rainbow off")
+    end, 8)
+
+    Section(scroll, "RADAR", 9)
     Checkbox(scroll, "Radar", false, function(v)
         RadarEnabled = v; RadarFrame.Visible = v
         Notify("Radar", v and "Radar on" or "Radar off")
-    end, 7)
-    Slider(scroll, "Radar Range", 50, 500, 100, 10, function(v) RadarRange = v end, 8)
+    end, 10)
+    Slider(scroll, "Radar Range", 50, 500, 100, 10, function(v) RadarRange = v end, 11)
 end
 
 -- ── MOVEMENT ────────────────────────────────────
@@ -1518,6 +1683,11 @@ do
 
     local layout = Instance.new("UIListLayout", scroll)
     layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 8)
+    scrollPad.PaddingRight  = UDim.new(0, 8)
+    scrollPad.PaddingTop    = UDim.new(0, 6)
+    scrollPad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
@@ -1550,6 +1720,9 @@ do
 
     local listLayout = Instance.new("UIListLayout", scroll)
     listLayout.Padding = UDim.new(0, 6); listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    local plrPad = Instance.new("UIPadding", scroll)
+    plrPad.PaddingLeft = UDim.new(0, 8); plrPad.PaddingRight  = UDim.new(0, 8)
+    plrPad.PaddingTop  = UDim.new(0, 6); plrPad.PaddingBottom = UDim.new(0, 6)
     connect(listLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y + 12)
     end)
@@ -1627,6 +1800,11 @@ do
 
     local layout = Instance.new("UIListLayout", scroll)
     layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 8)
+    scrollPad.PaddingRight  = UDim.new(0, 8)
+    scrollPad.PaddingTop    = UDim.new(0, 6)
+    scrollPad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
@@ -1683,12 +1861,202 @@ do
     local cServer = InfoLine("Server: loading...", 140, false, Theme.TextDim)
     local cBuild  = InfoLine("Build: Mars Solutions v5  ●  stable", 158, false, Theme.TextDim)
 
-    -- Load experience name async
     task.spawn(function()
         local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, game.PlaceId)
         cExp.Text = "Experience: " .. (ok and info and info.Name or game.Name or "Unknown")
         local jid = tostring(game.JobId or "N/A")
         cServer.Text = "Server: " .. (jid:len() > 24 and jid:sub(1,24).."..." or jid)
+    end)
+
+    -- ── Session Stats grid (2x2)
+    Section(scroll, "SESSION", 2)
+
+    local statsGrid = Instance.new("Frame", scroll)
+    statsGrid.LayoutOrder = 3
+    statsGrid.Size = UDim2.new(1, 0, 0, 72)
+    statsGrid.BackgroundTransparency = 1
+    local sgLayout = Instance.new("UIGridLayout", statsGrid)
+    sgLayout.CellSize = UDim2.new(0.5, -5, 0, 32)
+    sgLayout.CellPadding = UDim2.fromOffset(8, 8)
+    sgLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local function StatTile(label, valueText, order)
+        local tile = Instance.new("Frame", statsGrid)
+        tile.LayoutOrder = order
+        tile.BackgroundColor3 = Theme.Card
+        tile.BorderSizePixel = 0
+        Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 10)
+        local ts = Instance.new("UIStroke", tile); ts.Color = Theme.Border; ts.Thickness = 1
+
+        local valL = Instance.new("TextLabel", tile)
+        valL.Size = UDim2.new(1, 0, 0, 18); valL.Position = UDim2.new(0, 0, 0, 4)
+        valL.BackgroundTransparency = 1; valL.Font = Enum.Font.GothamBold
+        valL.TextSize = 13; valL.TextColor3 = Theme.TextPrimary; valL.Text = valueText
+
+        local lblL = Instance.new("TextLabel", tile)
+        lblL.Size = UDim2.new(1, 0, 0, 13); lblL.Position = UDim2.new(0, 0, 0, 19)
+        lblL.BackgroundTransparency = 1; lblL.Font = Enum.Font.Gotham
+        lblL.TextSize = 10; lblL.TextColor3 = Theme.TextDim; lblL.Text = label
+
+        return valL
+    end
+
+    local uptimeLbl   = StatTile("Uptime",          "0s",   1)
+    local activeFtLbl = StatTile("Active Features",  "0",    2)
+    local pingStatLbl = StatTile("Ping",             "--ms", 3)
+    local plrStatLbl  = StatTile("Players",          "--",   4)
+
+    -- Update uptime every second via a separate loop
+    task.spawn(function()
+        while not Unloaded do
+            local s = math.floor(tick() - SessionStart)
+            local h = math.floor(s / 3600)
+            local m = math.floor((s % 3600) / 60)
+            local sec = s % 60
+            uptimeLbl.Text = h > 0 and string.format("%dh %dm", h, m)
+                          or m > 0 and string.format("%dm %ds", m, sec)
+                          or tostring(sec) .. "s"
+
+            -- Count active features
+            local count = 0
+            if AimbotEnabled      then count += 1 end
+            if SilentAimEnabled   then count += 1 end
+            if TriggerbotEnabled  then count += 1 end
+            if BoneESPEnabled     then count += 1 end
+            if BoxESPEnabled      then count += 1 end
+            if TracersEnabled     then count += 1 end
+            if RadarEnabled       then count += 1 end
+            if CFrameMoveEnabled  then count += 1 end
+            if RainbowEnabled     then count += 1 end
+            activeFtLbl.Text = tostring(count)
+            activeFtLbl.TextColor3 = count > 0 and Theme.Accent or Theme.TextPrimary
+
+            local ping = 0
+            pcall(function() ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5) end)
+            pingStatLbl.Text = ping .. "ms"
+            pingStatLbl.TextColor3 = ping <= 80 and Theme.HUDGood or ping <= 150 and Theme.HUDWarn or Theme.HUDBad
+
+            plrStatLbl.Text = tostring(#Players:GetPlayers())
+
+            task.wait(1)
+        end
+    end)
+
+    -- ── Session Log
+    Section(scroll, "SESSION LOG", 4)
+
+    local logFrame = Instance.new("Frame", scroll)
+    logFrame.LayoutOrder = 5
+    logFrame.Size = UDim2.new(1, 0, 0, 160)
+    logFrame.BackgroundColor3 = Theme.Card
+    logFrame.BorderSizePixel = 0
+    Instance.new("UICorner", logFrame).CornerRadius = UDim.new(0, 10)
+    local lfStroke = Instance.new("UIStroke", logFrame); lfStroke.Color = Theme.Border; lfStroke.Thickness = 1
+
+    local logScroll = Instance.new("ScrollingFrame", logFrame)
+    logScroll.Size = UDim2.new(1, -12, 1, -12)
+    logScroll.Position = UDim2.fromOffset(6, 6)
+    logScroll.BackgroundTransparency = 1
+    logScroll.BorderSizePixel = 0
+    hideScrollBar(logScroll)
+
+    local logLayout = Instance.new("UIListLayout", logScroll)
+    logLayout.Padding = UDim.new(0, 3)
+    logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    logLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+
+    connect(logLayout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+        logScroll.CanvasSize = UDim2.new(0,0,0,logLayout.AbsoluteContentSize.Y + 8)
+        -- Auto-scroll to bottom
+        logScroll.CanvasPosition = Vector2.new(0, math.max(0, logLayout.AbsoluteContentSize.Y - logScroll.AbsoluteSize.Y + 8))
+    end)
+
+    local function appendLog(msg)
+        local s = math.floor(tick() - SessionStart)
+        local timeStr = string.format("[%02d:%02d]", math.floor(s/60), s%60)
+        local row = Instance.new("TextLabel", logScroll)
+        row.Size = UDim2.new(1, 0, 0, 14)
+        row.BackgroundTransparency = 1
+        row.Font = Enum.Font.Gotham
+        row.TextSize = 10
+        row.TextColor3 = Theme.TextDim
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Text = timeStr .. "  " .. msg
+        row.TextTruncate = Enum.TextTruncate.AtEnd
+        -- Trim to 40 rows
+        local children = logScroll:GetChildren()
+        local labels = {}
+        for _, c in ipairs(children) do if c:IsA("TextLabel") then table.insert(labels, c) end end
+        if #labels > 40 then labels[1]:Destroy() end
+    end
+
+    -- Expose appendLog for logSession calls to use
+    -- Wrap logSession to also push to UI
+    local _origLog = logSession
+    logSession = function(msg)
+        _origLog(msg)
+        appendLog(msg)
+    end
+
+    -- Seed with startup entry
+    appendLog("Mars Solutions v5 loaded")
+    appendLog("Place: " .. tostring(game.PlaceId))
+
+    -- ── Hook info card
+    Section(scroll, "HOOK STATUS", 6)
+
+    local hookCard = Instance.new("Frame", scroll)
+    hookCard.LayoutOrder = 7
+    hookCard.Size = UDim2.new(1, 0, 0, 56)
+    hookCard.BackgroundColor3 = Theme.Card
+    hookCard.BorderSizePixel = 0
+    Instance.new("UICorner", hookCard).CornerRadius = UDim.new(0, 10)
+    local hcStroke = Instance.new("UIStroke", hookCard); hcStroke.Color = Theme.Border; hcStroke.Thickness = 1
+
+    local function HookRow(label, yPos)
+        local dot = Instance.new("Frame", hookCard)
+        dot.Size = UDim2.fromOffset(7, 7); dot.Position = UDim2.fromOffset(12, yPos + 4)
+        dot.BackgroundColor3 = Theme.TextDim; dot.BorderSizePixel = 0
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+        local lbl = Instance.new("TextLabel", hookCard)
+        lbl.Size = UDim2.new(1, -80, 0, 16); lbl.Position = UDim2.fromOffset(26, yPos)
+        lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 11; lbl.TextColor3 = Theme.TextSecond
+        lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = label
+
+        local statusL = Instance.new("TextLabel", hookCard)
+        statusL.Size = UDim2.fromOffset(70, 16); statusL.Position = UDim2.new(1, -76, 0, yPos)
+        statusL.BackgroundTransparency = 1; statusL.Font = Enum.Font.GothamBold
+        statusL.TextSize = 10; statusL.TextXAlignment = Enum.TextXAlignment.Right
+        statusL.TextColor3 = Theme.TextDim; statusL.Text = "inactive"
+
+        return dot, statusL
+    end
+
+    local ncdot, ncStatus = HookRow("__namecall hook", 8)
+    local tbdot, tbStatus = HookRow("triggerbot input", 30)
+
+    -- Update hook status dynamically
+    task.spawn(function()
+        while not Unloaded do
+            if SAHooked then
+                ncdot.BackgroundColor3 = Theme.Online; ncStatus.TextColor3 = Theme.Online
+                ncStatus.Text = SAOriginalNamecall and "hooked" or "spoof"
+            else
+                ncdot.BackgroundColor3 = Theme.TextDim; ncStatus.TextColor3 = Theme.TextDim
+                ncStatus.Text = "inactive"
+            end
+
+            if TriggerbotEnabled then
+                tbdot.BackgroundColor3 = Theme.Accent; tbStatus.TextColor3 = Theme.Accent
+                tbStatus.Text = typeof(mouse1click) == "function" and "mouse1click" or "mouse1press"
+            else
+                tbdot.BackgroundColor3 = Theme.TextDim; tbStatus.TextColor3 = Theme.TextDim
+                tbStatus.Text = "inactive"
+            end
+            task.wait(0.5)
+        end
     end)
 end
 
@@ -1813,12 +2181,29 @@ connect(BtnClose.MouseButton1Click, unload)
 
 connect(RunService.RenderStepped, function(dt)
     if Unloaded then return end
+
+    -- Rainbow hue cycle (full cycle ~5 seconds)
+    rainbowHue = (rainbowHue + dt * 0.2) % 1
+
+    -- Apply rainbow to FOV circle live
+    FOVStroke.Color = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
+
     local center = Camera.ViewportSize / 2
 
     -- FOV circle + dot positioning
     FOVCircle.Size     = UDim2.fromOffset(AimFOV * 2, AimFOV * 2)
     FOVCircle.Position = UDim2.fromOffset(center.X, center.Y)
     FOVDot.Position    = UDim2.fromOffset(center.X, center.Y)
+
+    -- Silent Aim camera-spoof (low UNC fallback mode)
+    -- When namecall hook isn't available, briefly snap camera so server-side
+    -- raycasts originate at target on the frame the player fires
+    if SilentAimEnabled and SAHooked and not SAOriginalNamecall then
+        local silTarget = getSilentTarget()
+        if silTarget and ADS then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, silTarget.Position)
+        end
+    end
 
     -- Aimbot
     local target, targetPlayer = getTarget()
@@ -1838,27 +2223,48 @@ connect(RunService.RenderStepped, function(dt)
         end)
     end
 
-    -- Triggerbot
+    -- Triggerbot — multi-fallback input simulation
     if TriggerbotEnabled then
         local tTgt, _ = getCrosshairTarget()
         if tTgt then
             local now = tick()
             if now - lastTriggerFire >= TriggerbotDelay then
                 lastTriggerFire = now
-                if typeof(mouse1click) == "function" then
-                    pcall(mouse1click)
-                elseif typeof(mouse1press) == "function" then
+                -- Try every known executor input method in order
+                local fired = false
+                if not fired and typeof(mouse1click) == "function" then
+                    pcall(mouse1click); fired = true
+                end
+                if not fired and typeof(mousemoverel) == "function" and typeof(mouse1press) == "function" then
                     pcall(mouse1press)
-                    task.delay(0.06, function()
-                        if typeof(mouse1release) == "function" then
-                            pcall(mouse1release)
-                        end
+                    task.delay(math.max(0.04, TriggerbotDelay * 0.5), function()
+                        pcall(function()
+                            if typeof(mouse1release) == "function" then mouse1release() end
+                        end)
+                    end)
+                    fired = true
+                end
+                if not fired then
+                    -- UIS simulation fallback (works in some executors)
+                    pcall(function()
+                        local vInput = Instance.new("InputObject")
+                        vInput.UserInputType = Enum.UserInputType.MouseButton1
+                        vInput.UserInputState = Enum.UserInputState.Begin
+                        UIS:SimulateInput(vInput)
+                        task.delay(0.05, function()
+                            pcall(function()
+                                local vInput2 = Instance.new("InputObject")
+                                vInput2.UserInputType = Enum.UserInputType.MouseButton1
+                                vInput2.UserInputState = Enum.UserInputState.End
+                                UIS:SimulateInput(vInput2)
+                            end)
+                        end)
                     end)
                 end
             end
         end
     end
-
+        local tTgt, _ = getCrosshairTarget()
     -- Target Info Card
     if AimTargetInfoEnabled and ADS and target and targetPlayer then
         local tChar = targetPlayer.Character
@@ -1966,6 +2372,8 @@ connect(RunService.Stepped, function()
     local center = Camera.ViewportSize / 2
 
     -- ESP
+    local ec = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
+
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p) then
             local char = p.Character
@@ -1985,7 +2393,7 @@ connect(RunService.Stepped, function()
                         local line = BoneLines[p][i] or newLine(2)
                         BoneLines[p][i] = line
                         if line then
-                            line.Color = Theme.Accent
+                            line.Color = ec
                             line.Visible = av and bv
                             if line.Visible then
                                 line.From = Vector2.new(ap.X, ap.Y)
@@ -2004,7 +2412,7 @@ connect(RunService.Stepped, function()
                 TracerLines[p] = TracerLines[p] or newLine(1.4)
                 local tr = TracerLines[p]
                 if tr then
-                    tr.Color   = Theme.Accent
+                    tr.Color   = ec
                     tr.Visible = vis
                     if vis then
                         tr.From = Vector2.new(center.X, Camera.ViewportSize.Y)
@@ -2015,30 +2423,86 @@ connect(RunService.Stepped, function()
                 if TracerLines[p] then TracerLines[p].Visible = false end
             end
 
-            -- Box ESP
+            -- Box ESP + optional Health Bar
             if BoxESPEnabled and hum then
                 local minX, minY, maxX, maxY = getCharacterBounds2D(char)
                 BoxLines[p] = BoxLines[p] or {newLine(1.6),newLine(1.6),newLine(1.6),newLine(1.6)}
                 local ls = BoxLines[p]
                 if minX and ls then
-                    local tl = Vector2.new(minX, minY); local tr = Vector2.new(maxX, minY)
+                    local tl = Vector2.new(minX, minY); local tr2 = Vector2.new(maxX, minY)
                     local br = Vector2.new(maxX, maxY); local bl = Vector2.new(minX, maxY)
-                    for _, l in ipairs(ls) do if l then l.Color = Theme.Accent; l.Visible = true end end
-                    if ls[1] then ls[1].From,ls[1].To = tl,tr end
-                    if ls[2] then ls[2].From,ls[2].To = tr,br end
+                    for _, l in ipairs(ls) do if l then l.Color = ec; l.Visible = true end end
+                    if ls[1] then ls[1].From,ls[1].To = tl,tr2 end
+                    if ls[2] then ls[2].From,ls[2].To = tr2,br end
                     if ls[3] then ls[3].From,ls[3].To = br,bl end
                     if ls[4] then ls[4].From,ls[4].To = bl,tl end
+
+                    -- Health Bar (left side of box, 4px wide, offset 6px left)
+                    if HealthBarEnabled then
+                        if not HealthBarLines[p] then
+                            local bg   = Drawing and Drawing.new("Line") or nil
+                            local fill = Drawing and Drawing.new("Line") or nil
+                            if bg then
+                                bg.Thickness = 4; bg.Color = Color3.fromRGB(20,20,20)
+                                bg.Transparency = 1; bg.Visible = false
+                            end
+                            if fill then
+                                fill.Thickness = 3; fill.Transparency = 1; fill.Visible = false
+                            end
+                            HealthBarLines[p] = { bg = bg, fill = fill }
+                        end
+                        local hb = HealthBarLines[p]
+                        local hp = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        local barX = minX - 6
+                        local barTop = Vector2.new(barX, minY)
+                        local barBot = Vector2.new(barX, maxY)
+                        local barFillBot = Vector2.new(barX, minY + (maxY - minY) * (1 - hp))
+                        -- hp color: green → yellow → red
+                        local hpColor = hp > 0.6 and Color3.fromRGB(60, 210, 110)
+                                     or hp > 0.3 and Color3.fromRGB(255, 195, 55)
+                                     or Color3.fromRGB(220, 60, 60)
+                        if hb.bg then
+                            hb.bg.From    = barTop
+                            hb.bg.To      = barBot
+                            hb.bg.Visible = true
+                        end
+                        if hb.fill then
+                            hb.fill.From    = barFillBot
+                            hb.fill.To      = barBot
+                            hb.fill.Color   = hpColor
+                            hb.fill.Visible = hp > 0
+                        end
+                    else
+                        if HealthBarLines[p] then
+                            if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
+                            if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
+                        end
+                    end
                 elseif ls then
                     for _, l in pairs(ls) do if l then l.Visible = false end end
+                    if HealthBarLines[p] then
+                        if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
+                        if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
+                    end
                 end
-            elseif BoxLines[p] then
-                for _, l in pairs(BoxLines[p]) do if l then l.Visible = false end end
+            else
+                if BoxLines[p] then
+                    for _, l in pairs(BoxLines[p]) do if l then l.Visible = false end end
+                end
+                if HealthBarLines[p] then
+                    if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
+                    if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
+                end
             end
         else
-            -- Hide all lines for non-targets
+            -- Hide all lines for non-targets / dead
             if BoneLines[p]  then for _, l in pairs(BoneLines[p])  do if l then l.Visible = false end end end
             if TracerLines[p] then TracerLines[p].Visible = false end
             if BoxLines[p]   then for _, l in pairs(BoxLines[p])   do if l then l.Visible = false end end end
+            if HealthBarLines[p] then
+                if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
+                if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
+            end
         end
     end
 
