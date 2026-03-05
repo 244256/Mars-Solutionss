@@ -2,7 +2,7 @@
 -- Mars Solutions | UI v5 + SNAP AIM + ESP + CLIENT
 -- v5 - Session Stats, Full Client Card, Name/Distance ESP, Health Bar ESP
 --==================================================
-
+if not game:IsLoaded() then game.Loaded:Wait() end
 --// Services
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -393,7 +393,18 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MarsSolutionsUI"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = game:GetService("CoreGui")
+local function getUIParent()
+    if typeof(gethui) == "function" then
+        return gethui()
+    end
+    local ok, result = pcall(function()
+        return game:GetService("CoreGui")
+    end)
+    if ok then return result end
+    return LocalPlayer.PlayerGui
+end
+
+ScreenGui.Parent = getUIParent()
 
 --==================================================
 -- Notification System
