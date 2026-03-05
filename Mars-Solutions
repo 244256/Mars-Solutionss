@@ -134,6 +134,8 @@ local SAOriginalNamecall = nil
 -- Session
 local SessionStart = tick()
 local SessionLog   = {}
+local ActiveConfig = "Custom"   -- shown in header badge
+
 local function logSession(msg)
     table.insert(SessionLog, { t = tick() - SessionStart, msg = msg })
     if #SessionLog > 40 then table.remove(SessionLog, 1) end
@@ -764,6 +766,7 @@ Main.Size             = UDim2.fromOffset(WIN_W, WIN_H)
 Main.Position         = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
 Main.BackgroundColor3 = Theme.BG
 Main.BorderSizePixel  = 0
+Main.ClipsDescendants = false
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 14)
 
 local MainStroke = Instance.new("UIStroke", Main)
@@ -829,6 +832,35 @@ local StableLabel = Instance.new("TextLabel", StableBadge)
 StableLabel.Size = UDim2.new(1, -14, 1, 0); StableLabel.Position = UDim2.fromOffset(14, 0)
 StableLabel.BackgroundTransparency = 1; StableLabel.Font = Enum.Font.GothamBold
 StableLabel.TextSize = 9; StableLabel.TextColor3 = Theme.Online; StableLabel.Text = "stable"
+
+-- Config mode badge (right of stable badge, updates when preset applied)
+local ConfigBadge = Instance.new("Frame", Header)
+ConfigBadge.Size             = UDim2.fromOffset(54, 16)
+ConfigBadge.Position         = UDim2.new(0, 200, 0.5, 0)
+ConfigBadge.AnchorPoint      = Vector2.new(0, 0.5)
+ConfigBadge.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+ConfigBadge.BorderSizePixel  = 0
+Instance.new("UICorner", ConfigBadge).CornerRadius = UDim.new(1, 0)
+local ConfigBadgeStroke = Instance.new("UIStroke", ConfigBadge)
+ConfigBadgeStroke.Color = Theme.TextDim; ConfigBadgeStroke.Thickness = 1; ConfigBadgeStroke.Transparency = 0.4
+
+local ConfigBadgeLabel = Instance.new("TextLabel", ConfigBadge)
+ConfigBadgeLabel.Size = UDim2.new(1, 0, 1, 0)
+ConfigBadgeLabel.BackgroundTransparency = 1; ConfigBadgeLabel.Font = Enum.Font.GothamBold
+ConfigBadgeLabel.TextSize = 9; ConfigBadgeLabel.TextColor3 = Theme.TextDim
+ConfigBadgeLabel.Text = "custom"
+
+local function setConfigBadge(name, color)
+    ConfigBadgeLabel.Text       = name:lower()
+    ConfigBadgeLabel.TextColor3 = color or Theme.TextDim
+    ConfigBadgeStroke.Color     = color or Theme.TextDim
+    ConfigBadge.BackgroundColor3 = Color3.fromRGB(
+        math.floor((color or Theme.TextDim).R * 255 * 0.12),
+        math.floor((color or Theme.TextDim).G * 255 * 0.12),
+        math.floor((color or Theme.TextDim).B * 255 * 0.12)
+    )
+    ActiveConfig = name
+end
 
 -- ── Center: tab buttons live directly in header
 -- (TabBar/TabLayout declared here, used by MakeTab below)
@@ -1014,7 +1046,8 @@ MakeTab("Combat",   1)
 MakeTab("Visuals",  2)
 MakeTab("Movement", 3)
 MakeTab("Players",  4)
-MakeTab("Client",   5)
+MakeTab("Config",   5)
+MakeTab("Client",   6)
 
 --==================================================
 -- Footer bar
@@ -1323,9 +1356,9 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     local itemCount = #options
     local listH = itemCount * 30 + 8
 
-    -- Dropdown list parented to ScreenGui to escape all ClipsDescendants
-    local dropList = Instance.new("Frame", ScreenGui)
-    dropList.Size             = UDim2.fromOffset(0, 0)  -- positioned absolutely below btn
+    -- Dropdown list parented to Main (above PageContainer in ZIndex, no clip issues)
+    local dropList = Instance.new("Frame", Main)
+    dropList.Size             = UDim2.fromOffset(0, 0)
     dropList.BackgroundColor3 = Theme.Card
     dropList.BorderSizePixel  = 0
     dropList.ClipsDescendants = true
@@ -1379,13 +1412,17 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     connect(btn.MouseButton1Click, function()
         open = not open
         if open then
-            -- Reposition dropList to sit just below btn in screen space
+            -- Read screen position each time (handles window moves)
             local ap  = btn.AbsolutePosition
             local as  = btn.AbsoluteSize
+            local mp  = Main.AbsolutePosition
             local w   = as.X
-            dropList.Size    = UDim2.fromOffset(w, 0)
-            dropList.Position = UDim2.fromOffset(ap.X, ap.Y + as.Y + 2)
-            dropList.Visible = true
+            -- Position relative to Main so it stays inside Main's coordinate space
+            local relX = ap.X - mp.X
+            local relY = ap.Y - mp.Y + as.Y + 2
+            dropList.Size     = UDim2.fromOffset(w, 0)
+            dropList.Position = UDim2.fromOffset(relX, relY)
+            dropList.Visible  = true
             tween(dropList, {Size = UDim2.fromOffset(w, listH)}, 0.16)
             tween(chevron,  {Rotation = 180},                    0.16)
         else
@@ -1479,6 +1516,8 @@ local function SubTabBar(parent, tabs, order)
         local pl = Instance.new("UIListLayout", page)
         pl.Padding = UDim.new(0, 6); pl.SortOrder = Enum.SortOrder.LayoutOrder
         local pp = Instance.new("UIPadding", page)
+        pp.PaddingLeft  = UDim.new(0, 2)
+        pp.PaddingRight = UDim.new(0, 2)
         pp.PaddingTop = UDim.new(0, 4); pp.PaddingBottom = UDim.new(0, 6)
         subPages[tabName] = page
 
@@ -1782,6 +1821,300 @@ do
     refreshPlayers()
     connect(Players.PlayerAdded,    function(p) refreshPlayers(); Notify("Joined", p.DisplayName .. " (@" .. p.Name .. ")") end)
     connect(Players.PlayerRemoving, function(p) refreshPlayers(); Notify("Left",   p.DisplayName .. " (@" .. p.Name .. ")") end)
+end
+
+-- ── CONFIG ──────────────────────────────────────
+
+do
+    local page = TabPages["Config"]
+
+    local scroll = Instance.new("ScrollingFrame", page)
+    scroll.Size             = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
+    scroll.CanvasSize       = UDim2.new(0,0,0,0)
+
+    local layout = Instance.new("UIListLayout", scroll)
+    layout.Padding = UDim.new(0, 10); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 12)
+    scrollPad.PaddingRight  = UDim.new(0, 12)
+    scrollPad.PaddingTop    = UDim.new(0, 10)
+    scrollPad.PaddingBottom = UDim.new(0, 10)
+    connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+        scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 16)
+    end)
+
+    -- Helper: capture current state as a table
+    local function captureState()
+        return {
+            AimbotEnabled = AimbotEnabled, AimFOV = AimFOV, AimStrength = AimStrength,
+            AimMaxDistance = AimMaxDistance, Prediction = Prediction,
+            VisibleCheck = VisibleCheck, TeamCheck = TeamCheck,
+            AimPartIndex = AimPartIndex, AimMethodIndex = AimMethodIndex,
+            SilentAimEnabled = SilentAimEnabled, SilentAimFOV = SilentAimFOV,
+            SilentVisCheck = SilentVisCheck, SilentTeamCheck = SilentTeamCheck,
+            TriggerbotEnabled = TriggerbotEnabled, TriggerbotDelay = TriggerbotDelay,
+            TriggerbotThreshold = TriggerbotThreshold,
+            BoneESPEnabled = BoneESPEnabled, BoxESPEnabled = BoxESPEnabled,
+            TracersEnabled = TracersEnabled, HealthBarEnabled = HealthBarEnabled,
+            RainbowEnabled = RainbowEnabled, RadarEnabled = RadarEnabled,
+            RadarRange = RadarRange, WalkSpeed = WalkSpeed, JumpPower = JumpPower,
+            CameraFOV = CameraFOV, CFrameMoveEnabled = CFrameMoveEnabled,
+        }
+    end
+
+    -- Helper: apply a state table
+    local function applyState(s)
+        AimbotEnabled    = s.AimbotEnabled   or false
+        AimFOV           = s.AimFOV          or 120
+        AimStrength      = s.AimStrength     or 7
+        AimMaxDistance   = s.AimMaxDistance  or 500
+        Prediction       = s.Prediction      or 0
+        VisibleCheck     = s.VisibleCheck    or false
+        TeamCheck        = s.TeamCheck       ~= nil and s.TeamCheck or true
+        AimPartIndex     = s.AimPartIndex    or 1
+        AimMethodIndex   = s.AimMethodIndex  or 1
+        SilentAimEnabled = s.SilentAimEnabled or false
+        SilentAimFOV     = s.SilentAimFOV   or 120
+        SilentVisCheck   = s.SilentVisCheck  or false
+        SilentTeamCheck  = s.SilentTeamCheck ~= nil and s.SilentTeamCheck or true
+        TriggerbotEnabled   = s.TriggerbotEnabled  or false
+        TriggerbotDelay     = s.TriggerbotDelay    or 0.05
+        TriggerbotThreshold = s.TriggerbotThreshold or 12
+        BoneESPEnabled   = s.BoneESPEnabled  or false
+        BoxESPEnabled    = s.BoxESPEnabled   or false
+        TracersEnabled   = s.TracersEnabled  or false
+        HealthBarEnabled = s.HealthBarEnabled or false
+        RainbowEnabled   = s.RainbowEnabled  or false
+        RadarEnabled     = s.RadarEnabled    or false
+        RadarRange       = s.RadarRange      or 100
+        WalkSpeed        = s.WalkSpeed       or 16
+        JumpPower        = s.JumpPower       or 50
+        CameraFOV        = s.CameraFOV       or 70
+        CFrameMoveEnabled = s.CFrameMoveEnabled or false
+        if SilentAimEnabled then hookSilentAim() else unhookSilentAim() end
+    end
+
+    -- JSON encode/decode (minimal, no external deps)
+    local function encodeJSON(t)
+        local parts = {}
+        for k, v in pairs(t) do
+            local val
+            if type(v) == "boolean" then val = v and "true" or "false"
+            elseif type(v) == "number" then val = tostring(v)
+            else val = '"' .. tostring(v) .. '"' end
+            table.insert(parts, '"' .. k .. '":' .. val)
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
+    local function decodeJSON(str)
+        local t = {}
+        for k, v in str:gmatch('"([^"]+)":([^,}]+)') do
+            if v == "true" then t[k] = true
+            elseif v == "false" then t[k] = false
+            else local n = tonumber(v); t[k] = n ~= nil and n or v:match('"([^"]*)"') or v end
+        end
+        return t
+    end
+
+    local configFile = "mars_config_" .. tostring(game.PlaceId) .. ".json"
+
+    local function saveConfig()
+        pcall(function()
+            if typeof(writefile) == "function" then
+                writefile(configFile, encodeJSON(captureState()))
+                Notify("Config", "Saved to " .. configFile)
+                logSession("Config saved")
+            else
+                Notify("Config", "writefile not available on this executor")
+            end
+        end)
+    end
+
+    local function loadConfig()
+        pcall(function()
+            if typeof(readfile) == "function" and typeof(isfile) == "function" and isfile(configFile) then
+                local data = readfile(configFile)
+                applyState(decodeJSON(data))
+                setConfigBadge("Custom", Theme.TextSecond)
+                Notify("Config", "Loaded " .. configFile)
+                logSession("Config loaded")
+            else
+                Notify("Config", "No saved config found for this game")
+            end
+        end)
+    end
+
+    -- ── Preset definitions
+    -- ghost: legit, low-key, undetectable feel
+    -- drift: moderate, balanced
+    -- nova:  full rage, max values
+    local Presets = {
+        {
+            name  = "Ghost",
+            desc  = "Legit — subtle, human-like",
+            color = Color3.fromRGB(100, 200, 255),  -- ice blue
+            state = {
+                AimbotEnabled = true, AimFOV = 60, AimStrength = 3,
+                AimMaxDistance = 400, Prediction = 5, VisibleCheck = true, TeamCheck = true,
+                AimPartIndex = 1, AimMethodIndex = 1,
+                SilentAimEnabled = false, TriggerbotEnabled = false,
+                BoneESPEnabled = false, BoxESPEnabled = true, TracersEnabled = false,
+                HealthBarEnabled = true, RainbowEnabled = false, RadarEnabled = false,
+                WalkSpeed = 16, JumpPower = 50, CameraFOV = 70,
+            }
+        },
+        {
+            name  = "Drift",
+            desc  = "Moderate — balanced edge",
+            color = Color3.fromRGB(255, 165, 50),   -- warm amber
+            state = {
+                AimbotEnabled = true, AimFOV = 130, AimStrength = 6,
+                AimMaxDistance = 800, Prediction = 12, VisibleCheck = true, TeamCheck = true,
+                AimPartIndex = 1, AimMethodIndex = 1,
+                SilentAimEnabled = true, TriggerbotEnabled = true,
+                TriggerbotDelay = 0.08, TriggerbotThreshold = 20,
+                BoneESPEnabled = true, BoxESPEnabled = true, TracersEnabled = true,
+                HealthBarEnabled = true, RainbowEnabled = false, RadarEnabled = true,
+                RadarRange = 200, WalkSpeed = 16, JumpPower = 50, CameraFOV = 70,
+            }
+        },
+        {
+            name  = "Nova",
+            desc  = "Rage — full send",
+            color = Color3.fromRGB(220, 50, 50),    -- red
+            state = {
+                AimbotEnabled = true, AimFOV = 300, AimStrength = 10,
+                AimMaxDistance = 2000, Prediction = 25, VisibleCheck = false, TeamCheck = false,
+                AimPartIndex = 1, AimMethodIndex = 1,
+                SilentAimEnabled = true, TriggerbotEnabled = true,
+                TriggerbotDelay = 0.02, TriggerbotThreshold = 60,
+                BoneESPEnabled = true, BoxESPEnabled = true, TracersEnabled = true,
+                HealthBarEnabled = true, RainbowEnabled = true, RadarEnabled = true,
+                RadarRange = 500, WalkSpeed = 16, JumpPower = 50, CameraFOV = 70,
+            }
+        },
+    }
+
+    -- ── Section: Presets
+    Section(scroll, "PRESETS", 1)
+
+    for i, preset in ipairs(Presets) do
+        local card = Instance.new("Frame", scroll)
+        card.LayoutOrder = i + 1
+        card.Size = UDim2.new(1, 0, 0, 68)
+        card.BackgroundColor3 = Theme.Card
+        card.BorderSizePixel = 0
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 12)
+        local cs = Instance.new("UIStroke", card); cs.Color = Theme.Border; cs.Thickness = 1
+
+        -- Left color accent bar
+        local accent = Instance.new("Frame", card)
+        accent.Size = UDim2.new(0, 3, 1, -16); accent.Position = UDim2.fromOffset(10, 8)
+        accent.BackgroundColor3 = preset.color; accent.BorderSizePixel = 0
+        Instance.new("UICorner", accent).CornerRadius = UDim.new(1, 0)
+
+        -- Name
+        local nameL = Instance.new("TextLabel", card)
+        nameL.Size = UDim2.new(1, -120, 0, 22); nameL.Position = UDim2.fromOffset(22, 10)
+        nameL.BackgroundTransparency = 1; nameL.Font = Enum.Font.GothamBold
+        nameL.TextSize = 14; nameL.TextColor3 = preset.color
+        nameL.TextXAlignment = Enum.TextXAlignment.Left; nameL.Text = preset.name
+
+        -- Description
+        local descL = Instance.new("TextLabel", card)
+        descL.Size = UDim2.new(1, -120, 0, 16); descL.Position = UDim2.fromOffset(22, 34)
+        descL.BackgroundTransparency = 1; descL.Font = Enum.Font.Gotham
+        descL.TextSize = 11; descL.TextColor3 = Theme.TextSecond
+        descL.TextXAlignment = Enum.TextXAlignment.Left; descL.Text = preset.desc
+
+        -- Apply button
+        local applyBtn = Instance.new("TextButton", card)
+        applyBtn.Size = UDim2.fromOffset(72, 28); applyBtn.Position = UDim2.new(1, -84, 0.5, 0)
+        applyBtn.AnchorPoint = Vector2.new(0, 0.5)
+        applyBtn.BackgroundColor3 = Color3.fromRGB(
+            math.floor(preset.color.R * 255 * 0.18),
+            math.floor(preset.color.G * 255 * 0.18),
+            math.floor(preset.color.B * 255 * 0.18)
+        )
+        applyBtn.Font = Enum.Font.GothamBold; applyBtn.TextSize = 11
+        applyBtn.TextColor3 = preset.color; applyBtn.Text = "Apply"
+        applyBtn.BorderSizePixel = 0
+        Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 8)
+        local abs = Instance.new("UIStroke", applyBtn); abs.Color = preset.color; abs.Thickness = 1; abs.Transparency = 0.5
+
+        connect(applyBtn.MouseEnter, function()
+            tween(applyBtn, {BackgroundColor3 = Color3.fromRGB(
+                math.floor(preset.color.R * 255 * 0.3),
+                math.floor(preset.color.G * 255 * 0.3),
+                math.floor(preset.color.B * 255 * 0.3)
+            )}, 0.1)
+        end)
+        connect(applyBtn.MouseLeave, function()
+            tween(applyBtn, {BackgroundColor3 = Color3.fromRGB(
+                math.floor(preset.color.R * 255 * 0.18),
+                math.floor(preset.color.G * 255 * 0.18),
+                math.floor(preset.color.B * 255 * 0.18)
+            )}, 0.1)
+        end)
+        connect(applyBtn.MouseButton1Click, function()
+            applyState(preset.state)
+            setConfigBadge(preset.name, preset.color)
+            logSession("Preset applied: " .. preset.name)
+            Notify("Config", preset.name .. " preset applied")
+            -- Briefly flash the card border
+            tween(cs, {Color = preset.color, Thickness = 1.5}, 0.1)
+            task.delay(0.5, function() tween(cs, {Color = Theme.Border, Thickness = 1}, 0.3) end)
+        end)
+    end
+
+    -- ── Section: Save / Load
+    Section(scroll, "SAVE & LOAD", 5)
+
+    -- Info text
+    local infoL = Instance.new("TextLabel", scroll)
+    infoL.LayoutOrder = 6; infoL.Size = UDim2.new(1, 0, 0, 28)
+    infoL.BackgroundTransparency = 1; infoL.Font = Enum.Font.Gotham
+    infoL.TextSize = 11; infoL.TextColor3 = Theme.TextDim
+    infoL.TextXAlignment = Enum.TextXAlignment.Left
+    infoL.TextWrapped = true
+    infoL.Text = "Saves current settings per-game. Requires writefile support."
+
+    -- Save / Load buttons side by side
+    local btnRow = Instance.new("Frame", scroll)
+    btnRow.LayoutOrder = 7; btnRow.Size = UDim2.new(1, 0, 0, 36)
+    btnRow.BackgroundTransparency = 1
+    local brl = Instance.new("UIListLayout", btnRow)
+    brl.FillDirection = Enum.FillDirection.Horizontal
+    brl.Padding = UDim.new(0, 10); brl.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local function ActionBtn(label, color, order, callback)
+        local b = Instance.new("TextButton", btnRow)
+        b.LayoutOrder = order
+        b.Size = UDim2.new(0.5, -5, 1, 0)
+        b.BackgroundColor3 = color
+        b.Font = Enum.Font.GothamBold; b.TextSize = 12
+        b.TextColor3 = Theme.TextPrimary; b.Text = label
+        b.BorderSizePixel = 0
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+        connect(b.MouseEnter, function() tween(b, {BackgroundColor3 = b.BackgroundColor3:Lerp(Color3.new(1,1,1), 0.08)}, 0.1) end)
+        connect(b.MouseLeave, function() tween(b, {BackgroundColor3 = color}, 0.1) end)
+        connect(b.MouseButton1Click, callback)
+        return b
+    end
+
+    ActionBtn("💾  Save Config",  Color3.fromRGB(30, 55, 30), 1, saveConfig)
+    ActionBtn("📂  Load Config",  Color3.fromRGB(30, 35, 55), 2, loadConfig)
+
+    -- Current file label
+    local fileL = Instance.new("TextLabel", scroll)
+    fileL.LayoutOrder = 8; fileL.Size = UDim2.new(1, 0, 0, 16)
+    fileL.BackgroundTransparency = 1; fileL.Font = Enum.Font.Gotham
+    fileL.TextSize = 10; fileL.TextColor3 = Theme.TextDim
+    fileL.TextXAlignment = Enum.TextXAlignment.Left
+    fileL.Text = "File: " .. configFile
 end
 
 -- ── CLIENT ──────────────────────────────────────
@@ -2141,22 +2474,28 @@ end)
 --==================================================
 
 local minimized = false
-fullSize = Main.Size  -- assign the pre-declared upvalue
+fullSize = UDim2.fromOffset(WIN_W, WIN_H)  -- snapshot at load time
 
 connect(BtnMin.MouseButton1Click, function()
     minimized = not minimized
     if minimized then
-        for _, c in ipairs(Main:GetChildren()) do
-            if c ~= Header and c ~= MainStroke then
-                c.Visible = false
-            end
-        end
+        -- Hide everything except the header strip and stroke
+        PageContainer.Visible = false
+        Footer.Visible        = false
+        FooterSep.Visible     = false
+        HeaderSep.Visible     = false
+        ResizeHandle.Visible  = false
         tween(Main, { Size = UDim2.fromOffset(Main.AbsoluteSize.X, HEADER_H) }, 0.16)
     else
+        fullSize = UDim2.fromOffset(Main.AbsoluteSize.X, WIN_H)
         tween(Main, { Size = fullSize }, 0.16)
         task.delay(0.16, function()
             if Unloaded then return end
-            for _, c in ipairs(Main:GetChildren()) do c.Visible = true end
+            PageContainer.Visible = true
+            Footer.Visible        = true
+            FooterSep.Visible     = true
+            HeaderSep.Visible     = true
+            ResizeHandle.Visible  = true
         end)
     end
 end)
