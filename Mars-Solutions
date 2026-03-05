@@ -111,12 +111,6 @@ local CFrameWalkSpeed   = 24
 local CFrameJumpSpeed   = 18
 
 
--- Hitbox
-local HitboxEnabled       = false
-local HitboxSize          = 8
-local HitboxVisualEnabled = false
-local HitboxParts         = {}
-
 -- ESP
 local BoneESPEnabled    = false
 local TracersEnabled    = false
@@ -1764,31 +1758,6 @@ do
     end, 10)
     Slider(scroll, "Radar Range", 50, 500, 100, 10, function(v) RadarRange = v end, 11)
 
-    Section(scroll, "HITBOX", 12)
-    Checkbox(scroll, "Hitbox Expander", false, function(v)
-        HitboxEnabled = v
-        if not v then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and p.Character then
-                    local h = p.Character:FindFirstChild("HumanoidRootPart")
-                    if h and h:GetAttribute("_mHitbox") then
-                        h.Size = Vector3.new(2, 2, 1)
-                        h:SetAttribute("_mHitbox", nil)
-                    end
-                end
-            end
-        end
-        Notify("Hitbox", v and "Expander ON" or "Expander OFF")
-    end, 13)
-    Slider(scroll, "Hitbox Size", 2, 20, 8, 1, function(v) HitboxSize = v end, 14)
-    Checkbox(scroll, "Hitbox Visualizer", false, function(v)
-        HitboxVisualEnabled = v
-        if not v then
-            for _, sb in pairs(HitboxParts) do pcall(function() sb:Destroy() end) end
-            HitboxParts = {}
-        end
-        Notify("Hitbox", v and "Visualizer ON" or "Visualizer OFF")
-    end, 15)
 
 end
 
@@ -2802,38 +2771,6 @@ connect(RunService.Heartbeat, function()
     end
 
 
-
-    -- Hitbox expander
-    if HitboxEnabled then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character then
-                local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
-                    hrp.Transparency = 1
-                    hrp:SetAttribute("_mHitbox", true)
-                    if HitboxVisualEnabled then
-                        if not HitboxParts[p] then
-                            local sb = Instance.new("SelectionBox")
-                            sb.Color3 = Theme.Accent
-                            sb.LineThickness = 0.04
-                            sb.SurfaceTransparency = 0.85
-                            sb.SurfaceColor3 = Theme.Accent
-                            sb.Parent = CoreGui
-                            HitboxParts[p] = sb
-                        end
-                        HitboxParts[p].Adornee = hrp
-                    elseif HitboxParts[p] then
-                        HitboxParts[p]:Destroy()
-                        HitboxParts[p] = nil
-                    end
-                end
-            end
-        end
-    else
-        for _, sb in pairs(HitboxParts) do pcall(function() sb:Destroy() end) end
-        HitboxParts = {}
-    end
 
     -- ESP
     local ec = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
