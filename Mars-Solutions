@@ -300,6 +300,13 @@ ScreenGui.Parent        = game:GetService("CoreGui")
 -- Notification System  (with progress bar)
 --==================================================
 
+-- Invisible scroll bar helper
+local function hideScrollBar(sf)
+    sf.ScrollBarImageColor3 = Color3.fromRGB(0,0,0)
+    sf.ScrollBarImageTransparency = 1
+    sf.ScrollBarThickness = 0
+end
+
 local NotifContainer = Instance.new("Frame", ScreenGui)
 NotifContainer.Size                = UDim2.fromOffset(268, 400)
 NotifContainer.Position            = UDim2.new(1, -278, 1, -20)
@@ -623,6 +630,7 @@ TIId.TextSize = 10; TIId.TextColor3 = Theme.TextDim; TIId.TextXAlignment = Enum.
 --==================================================
 
 local WIN_W, WIN_H = 560, 400
+local fullSize  -- forward declared; set after Main created, updated on resize
 
 local Main = Instance.new("Frame", ScreenGui)
 Main.Size             = UDim2.fromOffset(WIN_W, WIN_H)
@@ -727,6 +735,69 @@ do
             local d = i.Position - dragStart
             Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
                                       startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+--==================================================
+-- Resize Handle  (bottom-right corner grip)
+--==================================================
+
+local MIN_W, MIN_H = 420, 320
+local MAX_W, MAX_H = 900, 700
+
+local ResizeHandle = Instance.new("TextButton", Main)
+ResizeHandle.Size             = UDim2.fromOffset(18, 18)
+ResizeHandle.Position         = UDim2.new(1, -18, 1, -18)
+ResizeHandle.BackgroundTransparency = 1
+ResizeHandle.Text             = ""
+ResizeHandle.ZIndex           = 20
+ResizeHandle.Active           = true
+
+-- Grip dots visual (3x3 pattern in corner)
+for row = 0, 2 do
+    for col = 0, 2 do
+        if row + col >= 2 then  -- only bottom-right triangle of dots
+            local dot = Instance.new("Frame", ResizeHandle)
+            dot.Size             = UDim2.fromOffset(2, 2)
+            dot.Position         = UDim2.fromOffset(col * 5 + 2, row * 5 + 2)
+            dot.BackgroundColor3 = Theme.TextDim
+            dot.BorderSizePixel  = 0
+            dot.BackgroundTransparency = 0.4
+            Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+        end
+    end
+end
+
+do
+    local resizing    = false
+    local resizeStart = nil
+    local startSize   = nil
+    local startPos2   = nil
+
+    connect(ResizeHandle.InputBegan, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            resizing    = true
+            resizeStart = i.Position
+            startSize   = Vector2.new(Main.AbsoluteSize.X, Main.AbsoluteSize.Y)
+            startPos2   = Main.Position
+        end
+    end)
+    connect(UIS.InputEnded, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            resizing = false
+            -- Snap fullSize for minimize/restore
+            fullSize = Main.Size
+        end
+    end)
+    connect(UIS.InputChanged, function(i)
+        if resizing and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - resizeStart
+            local newW = math.clamp(startSize.X + d.X, MIN_W, MAX_W)
+            local newH = math.clamp(startSize.Y + d.Y, MIN_H, MAX_H)
+            Main.Size = UDim2.fromOffset(newW, newH)
+            WIN_W = newW
+            WIN_H = newH
         end
     end)
 end
@@ -1089,6 +1160,7 @@ local function Slider(parent, text, min, max, default, step, callback, order)
 end
 
 -- Dropdown
+-- dropList is parented to ScreenGui so it always renders above scroll frames
 local function Dropdown(parent, text, options, defaultIndex, callback, order)
     local container = Instance.new("Frame", parent)
     container.Size             = UDim2.new(1, 0, 0, 46)
@@ -1123,25 +1195,36 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     btn.Text = options[idx]
     callback(idx)
 
-    local open = false
-    local dropList = Instance.new("Frame", container)
-    dropList.Size             = UDim2.new(1, 0, 0, 0)
-    dropList.Position         = UDim2.fromOffset(0, 46)
+    local itemCount = #options
+    local listH = itemCount * 30 + 8
+
+    -- Dropdown list parented to ScreenGui to escape all ClipsDescendants
+    local dropList = Instance.new("Frame", ScreenGui)
+    dropList.Size             = UDim2.fromOffset(0, 0)  -- positioned absolutely below btn
     dropList.BackgroundColor3 = Theme.Card
     dropList.BorderSizePixel  = 0
     dropList.ClipsDescendants = true
-    dropList.ZIndex           = 10
+    dropList.ZIndex           = 50
     dropList.Visible          = false
     Instance.new("UICorner", dropList).CornerRadius = UDim.new(0, 7)
 
     local dropStroke = Instance.new("UIStroke", dropList)
-    dropStroke.Color = Theme.Border; dropStroke.Thickness = 1
+    dropStroke.Color = Theme.Border; dropStroke.Thickness = 1; dropStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 
     local dropLayout = Instance.new("UIListLayout", dropList)
     dropLayout.Padding = UDim.new(0, 2); dropLayout.SortOrder = Enum.SortOrder.LayoutOrder
     local dropPad = Instance.new("UIPadding", dropList)
     dropPad.PaddingTop = UDim.new(0, 4); dropPad.PaddingBottom = UDim.new(0, 4)
     dropPad.PaddingLeft = UDim.new(0, 4); dropPad.PaddingRight = UDim.new(0, 4)
+
+    local open = false
+
+    local function closeDropdown()
+        tween(dropList, {Size = UDim2.fromOffset(dropList.AbsoluteSize.X, 0)}, 0.14)
+        task.delay(0.14, function() dropList.Visible = false end)
+        tween(chevron, {Rotation = 0}, 0.14)
+        open = false
+    end
 
     for i, opt in ipairs(options) do
         local item = Instance.new("TextButton", dropList)
@@ -1151,7 +1234,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         item.Font              = Enum.Font.Gotham; item.TextSize = 12
         item.TextColor3        = i == idx and Theme.TextAccent or Theme.TextSecond
         item.TextXAlignment    = Enum.TextXAlignment.Left; item.Text = opt
-        item.BorderSizePixel   = 0
+        item.BorderSizePixel   = 0; item.ZIndex = 51
         Instance.new("UICorner", item).CornerRadius = UDim.new(0, 6)
         local ip = Instance.new("UIPadding", item); ip.PaddingLeft = UDim.new(0, 8)
 
@@ -1164,27 +1247,43 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
                     child.TextColor3 = child.Text == opt and Theme.TextAccent or Theme.TextSecond
                 end
             end
-            tween(dropList, {Size = UDim2.new(1, 0, 0, 0)}, 0.14)
-            task.delay(0.14, function() dropList.Visible = false end)
-            tween(chevron, {Rotation = 0}, 0.14)
-            open = false
+            closeDropdown()
         end)
     end
-
-    local itemCount = #options
-    local listH = itemCount * 30 + 8
 
     connect(btn.MouseButton1Click, function()
         open = not open
         if open then
+            -- Reposition dropList to sit just below btn in screen space
+            local ap  = btn.AbsolutePosition
+            local as  = btn.AbsoluteSize
+            local w   = as.X
+            dropList.Size    = UDim2.fromOffset(w, 0)
+            dropList.Position = UDim2.fromOffset(ap.X, ap.Y + as.Y + 2)
             dropList.Visible = true
-            dropList.Size = UDim2.new(1, 0, 0, 0)
-            tween(dropList, {Size = UDim2.new(1, 0, 0, listH)}, 0.16)
-            tween(chevron,  {Rotation = 180},                   0.16)
+            tween(dropList, {Size = UDim2.fromOffset(w, listH)}, 0.16)
+            tween(chevron,  {Rotation = 180},                    0.16)
         else
-            tween(dropList, {Size = UDim2.new(1, 0, 0, 0)}, 0.14)
-            task.delay(0.14, function() dropList.Visible = false end)
-            tween(chevron,  {Rotation = 0},                 0.14)
+            closeDropdown()
+        end
+    end)
+
+    -- Close if window moves (reposition) or user clicks elsewhere
+    connect(UIS.InputBegan, function(i, gp)
+        if open and i.UserInputType == Enum.UserInputType.MouseButton1 then
+            -- small delay so the btn click registers first
+            task.defer(function()
+                local mp = UIS:GetMouseLocation()
+                local dp = dropList.AbsolutePosition
+                local ds = dropList.AbsoluteSize
+                local inDrop = mp.X >= dp.X and mp.X <= dp.X + ds.X
+                            and mp.Y >= dp.Y and mp.Y <= dp.Y + ds.Y
+                local bp = btn.AbsolutePosition
+                local bs = btn.AbsoluteSize
+                local inBtn  = mp.X >= bp.X and mp.X <= bp.X + bs.X
+                            and mp.Y >= bp.Y and mp.Y <= bp.Y + bs.Y
+                if not inDrop and not inBtn then closeDropdown() end
+            end)
         end
     end)
 end
@@ -1250,8 +1349,8 @@ local function SubTabBar(parent, tabs, order)
         page.AutomaticSize   = Enum.AutomaticSize.Y
         page.BackgroundTransparency = 1
         page.Visible          = false
-        page.ScrollBarThickness = 2
         page.BorderSizePixel  = 0
+        hideScrollBar(page)
         local pl = Instance.new("UIListLayout", page)
         pl.Padding = UDim.new(0, 6); pl.SortOrder = Enum.SortOrder.LayoutOrder
         local pp = Instance.new("UIPadding", page)
@@ -1299,7 +1398,7 @@ do
     scroll.Size             = UDim2.new(1, -20, 1, -10)
     scroll.Position         = UDim2.fromOffset(10, 5)
     scroll.BackgroundTransparency = 1
-    scroll.ScrollBarThickness = 2
+    hideScrollBar(scroll)
     scroll.BorderSizePixel  = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
 
@@ -1367,7 +1466,7 @@ do
     scroll.Size             = UDim2.new(1, -20, 1, -10)
     scroll.Position         = UDim2.fromOffset(10, 5)
     scroll.BackgroundTransparency = 1
-    scroll.ScrollBarThickness = 2; scroll.BorderSizePixel = 0
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
 
     local layout = Instance.new("UIListLayout", scroll)
@@ -1414,7 +1513,7 @@ do
     scroll.Size             = UDim2.new(1, -20, 1, -10)
     scroll.Position         = UDim2.fromOffset(10, 5)
     scroll.BackgroundTransparency = 1
-    scroll.ScrollBarThickness = 2; scroll.BorderSizePixel = 0
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
 
     local layout = Instance.new("UIListLayout", scroll)
@@ -1446,7 +1545,7 @@ do
     scroll.Size             = UDim2.new(1, -20, 1, -10)
     scroll.Position         = UDim2.fromOffset(10, 5)
     scroll.BackgroundTransparency = 1
-    scroll.ScrollBarThickness = 3; scroll.BorderSizePixel = 0
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
 
     local listLayout = Instance.new("UIListLayout", scroll)
@@ -1523,7 +1622,7 @@ do
     scroll.Size             = UDim2.new(1, -20, 1, -10)
     scroll.Position         = UDim2.fromOffset(10, 5)
     scroll.BackgroundTransparency = 1
-    scroll.ScrollBarThickness = 2; scroll.BorderSizePixel = 0
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
 
     local layout = Instance.new("UIListLayout", scroll)
@@ -1675,9 +1774,8 @@ end)
 -- Window controls
 --==================================================
 
-local minimized  = false
-local fullSize   = Main.Size
-local miniSize   = UDim2.new(fullSize.X.Scale, fullSize.X.Offset, 0, 52)
+local minimized = false
+fullSize = Main.Size  -- assign the pre-declared upvalue
 
 connect(BtnMin.MouseButton1Click, function()
     minimized = not minimized
@@ -1687,7 +1785,7 @@ connect(BtnMin.MouseButton1Click, function()
                 c.Visible = false
             end
         end
-        tween(Main, { Size = miniSize }, 0.16)
+        tween(Main, { Size = UDim2.fromOffset(Main.AbsoluteSize.X, 52) }, 0.16)
     else
         tween(Main, { Size = fullSize }, 0.16)
         task.delay(0.16, function()
