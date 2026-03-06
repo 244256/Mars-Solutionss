@@ -836,7 +836,7 @@ IDLabel("v5",        Enum.Font.GothamBold, 11, Theme.Accent,      118)
 -- Stable badge
 local StableBadge = Instance.new("Frame", IdentityRow)
 StableBadge.Size             = UDim2.fromOffset(46, 16)
-StableBadge.Position         = UDim2.new(0, 138, 0.5, 0)
+StableBadge.Position         = UDim2.new(0, 148, 0.5, 0)
 StableBadge.AnchorPoint      = Vector2.new(0, 0.5)
 StableBadge.BackgroundColor3 = Color3.fromRGB(20, 40, 26)
 StableBadge.BorderSizePixel  = 0
@@ -855,8 +855,8 @@ StableLabel.TextSize = 9; StableLabel.TextColor3 = Theme.Online; StableLabel.Tex
 -- Config mode badge — anchored to the RIGHT side of identity row, left of win buttons
 local ConfigBadge = Instance.new("Frame", IdentityRow)
 ConfigBadge.Size        = UDim2.fromOffset(58, 16)
-ConfigBadge.Position    = UDim2.new(1, -100, 0.5, 0)
-ConfigBadge.AnchorPoint = Vector2.new(0, 0.5)
+ConfigBadge.Position    = UDim2.new(1, -104, 0.5, 0)
+ConfigBadge.AnchorPoint = Vector2.new(1, 0.5)
 ConfigBadge.BackgroundColor3 = Color3.fromRGB(28, 24, 28)
 ConfigBadge.BorderSizePixel  = 0
 Instance.new("UICorner", ConfigBadge).CornerRadius = UDim.new(1, 0)
@@ -1449,21 +1449,6 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         end
     end)
 
-    -- Expose setValue so applyState can sync the label
-    local ctrl = {}
-    ctrl.setValue = function(newIdx)
-        if options[newIdx] then
-            idx = newIdx
-            btn.Text = options[newIdx]
-            for _, child in ipairs(dropList:GetChildren()) do
-                if child:IsA("TextButton") then
-                    child.TextColor3 = child.Text == options[newIdx] and Theme.TextAccent or Theme.TextSecond
-                end
-            end
-        end
-    end
-    return ctrl
-
     -- Close if window moves (reposition) or user clicks elsewhere
     connect(UIS.InputBegan, function(i, gp)
         if open and i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1482,6 +1467,21 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
             end)
         end
     end)
+
+    -- setValue lets applyState sync button label without triggering callback
+    local ctrl = {}
+    ctrl.setValue = function(newIdx)
+        if options[newIdx] then
+            idx = newIdx
+            btn.Text = options[newIdx]
+            for _, child in ipairs(dropList:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.TextColor3 = child.Text == options[newIdx] and Theme.TextAccent or Theme.TextSecond
+                end
+            end
+        end
+    end
+    return ctrl
 end
 
 -- Sub-tab bar  (thin text row, active = accent + underline)
@@ -1744,6 +1744,40 @@ do
 
 end
 
+-- ── MOVEMENT ────────────────────────────────────
+
+do
+    local page = TabPages["Movement"]
+
+    local scroll = Instance.new("ScrollingFrame", page)
+    scroll.Size             = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    hideScrollBar(scroll); scroll.BorderSizePixel = 0
+    scroll.CanvasSize       = UDim2.new(0,0,0,0)
+
+    local layout = Instance.new("UIListLayout", scroll)
+    layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local pad = Instance.new("UIPadding", scroll)
+    pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight  = UDim.new(0,8)
+    pad.PaddingTop  = UDim.new(0,6); pad.PaddingBottom = UDim.new(0,6)
+    connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+        scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
+    end)
+
+    Section(scroll, "CHARACTER", 1)
+    Slider(scroll, "Walk Speed", 16, 200, 16, 1, function(v) WalkSpeed  = v end, 2)
+    Slider(scroll, "Jump Power", 25, 300, 50, 1, function(v) JumpPower  = v end, 3)
+    Slider(scroll, "Camera FOV", 40, 120, 70, 1, function(v) CameraFOV  = v end, 4)
+
+    Section(scroll, "CFRAME MOVEMENT", 5)
+    Checkbox(scroll, "CFrame Move", false, function(v)
+        CFrameMoveEnabled = v
+        Notify("Movement", v and "CFrame Move ON" or "CFrame Move OFF")
+    end, 6)
+    Slider(scroll, "CF Speed", 8, 120, 24, 1, function(v) CFrameWalkSpeed = v end, 7)
+    Slider(scroll, "CF Jump",  4,  80, 18, 1, function(v) CFrameJumpSpeed = v end, 8)
+end
+
 -- ── PLAYERS ─────────────────────────────────────
 
 do
@@ -1923,18 +1957,32 @@ do
         return t
     end
 
-    local configFile = "mars_config_" .. tostring(game.PlaceId) .. ".json"
+    local configFolder = "Mars"
+    local configFile   = configFolder .. "/mars_" .. tostring(game.PlaceId) .. ".json"
+
+    -- Ensure folder exists
+    pcall(function()
+        if typeof(makefolder) == "function" then
+            if typeof(isfolder) == "function" then
+                if not isfolder(configFolder) then makefolder(configFolder) end
+            else
+                pcall(makefolder, configFolder)
+            end
+        end
+    end)
 
     local function saveConfig()
-        pcall(function()
-            if typeof(writefile) == "function" then
-                writefile(configFile, encodeJSON(captureState()))
-                Notify("Config", "Saved to " .. configFile)
-                logSession("Config saved")
-            else
-                Notify("Config", "writefile not available on this executor")
-            end
-        end)
+        if typeof(writefile) ~= "function" then
+            Notify("Config", "writefile not supported on this executor")
+            return
+        end
+        local ok, err = pcall(writefile, configFile, encodeJSON(captureState()))
+        if ok then
+            Notify("Config", "Saved  →  " .. configFile)
+            logSession("Config saved: " .. configFile)
+        else
+            Notify("Config", "Save failed: " .. tostring(err))
+        end
     end
 
     local function loadConfig()
@@ -1943,15 +1991,19 @@ do
             return
         end
         local ok, data = pcall(readfile, configFile)
-        if ok and data and #data > 0 then
-            pcall(function()
+        if ok and type(data) == "string" and #data > 2 then
+            local ok2, err2 = pcall(function()
                 applyState(decodeJSON(data))
                 setConfigBadge("Custom", Theme.TextSecond)
-                Notify("Config", "Loaded " .. configFile)
-                logSession("Config loaded")
             end)
+            if ok2 then
+                Notify("Config", "Loaded  →  " .. configFile)
+                logSession("Config loaded: " .. configFile)
+            else
+                Notify("Config", "Parse error: " .. tostring(err2))
+            end
         else
-            Notify("Config", "No saved config found — save one first")
+            Notify("Config", "No config file found — save one first")
         end
     end
 
