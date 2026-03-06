@@ -4,6 +4,7 @@
 -- Services
 local Plrs,UIS,RS,TS,MPS,Stats = game:GetService("Players"),game:GetService("UserInputService"),game:GetService("RunService"),game:GetService("TweenService"),game:GetService("MarketplaceService"),game:GetService("Stats")
 local Cam,LP = workspace.CurrentCamera, game:GetService("Players").LocalPlayer
+local Mouse=LP:GetMouse()
 
 -- Theme
 local T={
@@ -19,16 +20,19 @@ local T={
 
 -- State
 local ADS,AimbotEnabled,AimbotAlwaysOn,AimFOV,AimStrength,AimMaxDist,Pred,VisChk,TeamChk=false,false,false,120,7,500,0,false,true
+local ShowAimFOV,ShowSilentFOV=true,true
 local AimParts={"Head","UpperTorso","HumanoidRootPart"} local AimMethods={"Camera Lerp","Mouse"} local AimPI,AimMI=1,1
 local SAEnabled,SAFOV,SAVis,SATeam=false,120,false,true
 local TBEnabled,TBDelay,TBThresh,TBVis,TBTeam,lastTB=false,0.05,12,false,true,0
 local WS,JP,CFOV,CFMove,CFSpeed,CFJump,InfJump,AntiAFK=16,50,70,false,24,18,false,false
+local NoClip,SprintBoost,SprintMult=false,false,1.35
+local LockedAimPart,LockedAimPlr,LockGraceEnd=nil,nil,0
 local BoneESP,TracerESP,BoxESP,NameESP,DistESP,HBarESP,TgtInfo,RadarOn,RadarRange=false,false,false,false,false,false,false,false,100
 local ChamsOn=false local ChamsColor=Color3.fromRGB(220,50,50)
 local RainbowOn,rhue=false,0
 local BoneLines,TracerLines,BoxLines,HBarLines,NameLbls,DistLbls,ChamsInst={},{},{},{},{},{},{}
 local DRefs,SRefs={},{}
-local SAHooked,SAOrig=false,nil
+local SAHooked,SAOrigNC,SAOrigIdx=false,nil,nil
 local SessStart=tick() local SessLog={} local ActiveCfg="Custom"
 local Conns,CharConns,Unloaded,ThumbCache,sFrame={},{},false,{},0
 local CachedPl={} local function rPC() CachedPl=Plrs:GetPlayers() end rPC()
@@ -105,17 +109,52 @@ local function bounds2D(char)
 end
 
 local function getTarget()
-    local ctr=Cam.ViewportSize/2 local best,bPlr,bDst=nil,nil,AimFOV
+    local ctr=Cam.ViewportSize/2
+    local mr=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    local function scorePart(pt)
+        if not pt then return nil end
+        if VisChk and not visChk(pt,true) then return nil end
+        if mr and (pt.Position-mr.Position).Magnitude>AimMaxDist then return nil end
+        local pos,vis=Cam:WorldToViewportPoint(aimPt(pt))
+        if not vis then return nil end
+        local d=(Vector2.new(pos.X,pos.Y)-ctr).Magnitude
+        if d>AimFOV then return nil end
+        return d
+    end
+
+    if LockedAimPlr and LockedAimPlr.Character and alive(LockedAimPlr.Character) and isEnemy(LockedAimPlr) then
+        local lockPart=LockedAimPart and LockedAimPart.Parent and LockedAimPart or aimPart(LockedAimPlr.Character)
+        local lockDist=scorePart(lockPart)
+        if lockDist then
+            LockedAimPart=lockPart
+            LockGraceEnd=tick()+0.18
+            return lockPart,LockedAimPlr
+        elseif tick()<=LockGraceEnd and lockPart then
+            return lockPart,LockedAimPlr
+        end
+    end
+
+    local best,bPlr,bDst=nil,nil,AimFOV
     for _,p in ipairs(CachedPl) do
         if p~=LP and p.Character and alive(p.Character) and isEnemy(p) then
-            local pt=aimPart(p.Character) if not pt then continue end
-            if not visChk(pt,VisChk) then continue end
-            local mr=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-            if mr and (pt.Position-mr.Position).Magnitude>AimMaxDist then continue end
-            local pos,vis=Cam:WorldToViewportPoint(aimPt(pt))
-            if vis then local d=(Vector2.new(pos.X,pos.Y)-ctr).Magnitude if d<bDst then bDst=d best=pt bPlr=p end end
+            local pt=aimPart(p.Character)
+            local d=scorePart(pt)
+            if d and d<bDst then bDst=d best=pt bPlr=p end
         end
-    end return best,bPlr
+    end
+    LockedAimPart,LockedAimPlr=best,bPlr
+    if best then LockGraceEnd=tick()+0.18 end
+    return best,bPlr
+end
+
+local function applyAim(toPos,dt)
+    local tgt=CFrame.new(Cam.CFrame.Position,toPos)
+    if AimMethods[AimMI]=="Mouse" then
+        Cam.CFrame=tgt
+        return
+    end
+    local alpha=math.clamp(((11-AimStrength)/10)*math.clamp(dt*60,.7,1.5),.14,.98)
+    Cam.CFrame=Cam.CFrame:Lerp(tgt,alpha)
 end
 
 local function getCrosshairTgt()
@@ -145,28 +184,62 @@ local function getSATgt()
 end
 
 -- Silent Aim hook
+local function saTargetData()
+    local tgt=getSATgt()
+    if not tgt then return nil,nil end
+    return tgt,aimPt(tgt)
+end
+
 local function hookSA()
     if SAHooked then return end
     local ok=pcall(function()
-        local mt=getrawmetatable(game) local old=mt.__namecall SAOrig=old
+        local mt=getrawmetatable(game)
+        SAOrigNC,SAOrigIdx=mt.__namecall,mt.__index
         setreadonly(mt,false)
         mt.__namecall=newcclosure(function(self,...)
             local m=getnamecallmethod()
+            local args={...}
             if SAEnabled and (m=="FireServer" or m=="InvokeServer") then
-                local tool=LP.Character and LP.Character:FindFirstChildOfClass("Tool")
-                if tool then local tgt=getSATgt() if tgt then
-                    local ocf=Cam.CFrame Cam.CFrame=CFrame.new(Cam.CFrame.Position,tgt.Position)
-                    local r={old(self,...)} Cam.CFrame=ocf return table.unpack(r)
-                end end
-            end return old(self,...)
+                local _,spos=saTargetData()
+                if spos then
+                    for i,v in ipairs(args) do
+                        if typeof(v)=="Vector3" then
+                            args[i]=spos
+                        elseif typeof(v)=="CFrame" then
+                            args[i]=CFrame.new(spos)
+                        end
+                    end
+                    return SAOrigNC(self,table.unpack(args))
+                end
+            end
+            return SAOrigNC(self,...)
+        end)
+        mt.__index=newcclosure(function(self,k)
+            if SAEnabled and self==Mouse and (k=="Hit" or k=="Target") then
+                local tgt,spos=saTargetData()
+                if k=="Hit" and spos then
+                    return CFrame.new(spos)
+                elseif k=="Target" and tgt then
+                    return tgt
+                end
+            end
+            return SAOrigIdx(self,k)
         end)
         setreadonly(mt,true)
     end)
-    SAHooked=true logS("SA hook "..(ok and "__namecall" or "spoof"))
+    SAHooked=ok
+    logS("SA hook "..(ok and "active" or "failed"))
 end
 local function unhookSA()
     if not SAHooked then return end
-    pcall(function() if SAOrig then local mt=getrawmetatable(game) setreadonly(mt,false) mt.__namecall=SAOrig setreadonly(mt,true) SAOrig=nil end end)
+    pcall(function()
+        local mt=getrawmetatable(game)
+        setreadonly(mt,false)
+        if SAOrigNC then mt.__namecall=SAOrigNC end
+        if SAOrigIdx then mt.__index=SAOrigIdx end
+        setreadonly(mt,true)
+    end)
+    SAOrigNC,SAOrigIdx=nil,nil
     SAHooked=false
 end
 
@@ -252,10 +325,7 @@ local Main=newInst("Frame",{Size=UDim2.fromOffset(WW,WH),Position=UDim2.new(.5,-
 -- Header (identity row 30px + tab row 32px = 62px)
 local IH,TBH,HH=30,32,62
 local Hdr=newInst("Frame",{Size=UDim2.new(1,0,0,HH),BackgroundColor3=T.BGS},Main) corner(Hdr,14)
-newInst("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=T.BGS},Hdr)
-newInst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,HH),BackgroundColor3=T.Sep},Main)
 local IR=newInst("Frame",{Size=UDim2.new(1,0,0,IH),BackgroundTransparency=1},Hdr)
-newInst("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,IH),BackgroundColor3=T.Sep},Hdr)
 
 -- Identity labels
 for _,d in ipairs({{"MARS",Enum.Font.GothamBold,13,T.TP,12},{"Solutions",Enum.Font.Gotham,11,T.TS,54},{"v5",Enum.Font.GothamBold,11,T.Acc,118}}) do
@@ -342,10 +412,7 @@ end
 
 local function Sec(parent,text,ord)
     local f=newInst("Frame",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,LayoutOrder=ord or 0},parent)
-    -- Full-width separator line sits at vertical center
-    newInst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.Sep,ZIndex=1},f)
-    -- Label has a solid background so it masks the line behind it
-    local bg=newInst("Frame",{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.BG,ZIndex=2},f)
+    local bg=newInst("Frame",{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundTransparency=1,ZIndex=2},f)
     pad(bg,0,6,0,0)
     lbl(bg,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,1,0),Font=Enum.Font.GothamBold,TextSize=10,TextColor3=T.TA,Text=text,ZIndex=3})
 end
@@ -449,23 +516,25 @@ do local sc=buildTab("Combat")
     SRefs.VisibleCheck=Chk(sc,"Visible Check",false,function(v)VisChk=v end,5)
     Sec(sc,"AIM SETTINGS",6)
     SRefs.AimFOV=Sld(sc,"FOV",40,300,AimFOV,1,function(v)AimFOV=v end,7)
-    SRefs.AimStrength=Sld(sc,"Smoothing",1,10,7,1,function(v)AimStrength=11-v end,8)
+    SRefs.AimStrength=Sld(sc,"Smoothing",1,10,7,1,function(v)AimStrength=v end,8)
     SRefs.AimMaxDistance=Sld(sc,"Max Distance",50,2000,AimMaxDist,50,function(v)AimMaxDist=v end,9)
     SRefs.Prediction=Sld(sc,"Prediction",0,30,0,1,function(v)Pred=v/100 end,10)
-    local d1=DD(sc,"Hit Part",AimParts,1,function(i)AimPI=i end,11)
-    local d2=DD(sc,"Aim Method",AimMethods,1,function(i)AimMI=i end,12)
+    SRefs.ShowAimFOV=Chk(sc,"Show Aimbot FOV",true,function(v)ShowAimFOV=v end,11)
+    local d1=DD(sc,"Hit Part",AimParts,1,function(i)AimPI=i end,12)
+    local d2=DD(sc,"Aim Method",AimMethods,1,function(i)AimMI=i end,13)
     DRefs.HitPart=d1 DRefs.AimMethod=d2
     Sec(sc,"SILENT AIM",13)
     SRefs.SilentAimEnabled=Chk(sc,"Enabled",false,function(v)SAEnabled=v if v then hookSA()else unhookSA()end logS("SA "..(v and"ON"or"OFF")) Notify("Silent Aim",v and"Enabled"or"Disabled")end,14)
     SRefs.SilentTeamCheck=Chk(sc,"Team Check",true,function(v)SATeam=v end,15)
     SRefs.SilentVisCheck=Chk(sc,"Visible Check",false,function(v)SAVis=v end,16)
     SRefs.SilentAimFOV=Sld(sc,"Silent FOV",40,300,SAFOV,1,function(v)SAFOV=v end,17)
-    Sec(sc,"TRIGGERBOT",18)
-    SRefs.TriggerbotEnabled=Chk(sc,"Enabled",false,function(v)TBEnabled=v logS("TB "..(v and"ON"or"OFF")) Notify("Triggerbot",v and"Enabled"or"Disabled")end,19)
-    SRefs.TriggerbotTeamCheck=Chk(sc,"Team Check",true,function(v)TBTeam=v end,20)
-    SRefs.TriggerbotVisCheck=Chk(sc,"Visible Check",false,function(v)TBVis=v end,21)
-    SRefs.TriggerbotDelay=Sld(sc,"Delay (ms)",0,500,50,1,function(v)TBDelay=v/1000 end,22)
-    SRefs.TriggerbotThreshold=Sld(sc,"Threshold (px)",2,60,12,1,function(v)TBThresh=v end,23)
+    SRefs.ShowSilentFOV=Chk(sc,"Show Silent FOV",true,function(v)ShowSilentFOV=v end,18)
+    Sec(sc,"TRIGGERBOT",19)
+    SRefs.TriggerbotEnabled=Chk(sc,"Enabled",false,function(v)TBEnabled=v logS("TB "..(v and"ON"or"OFF")) Notify("Triggerbot",v and"Enabled"or"Disabled")end,20)
+    SRefs.TriggerbotTeamCheck=Chk(sc,"Team Check",true,function(v)TBTeam=v end,21)
+    SRefs.TriggerbotVisCheck=Chk(sc,"Visible Check",false,function(v)TBVis=v end,22)
+    SRefs.TriggerbotDelay=Sld(sc,"Delay (ms)",0,500,50,1,function(v)TBDelay=v/1000 end,23)
+    SRefs.TriggerbotThreshold=Sld(sc,"Threshold (px)",2,60,12,1,function(v)TBThresh=v end,24)
 end
 
 -- VISUALS
@@ -498,10 +567,13 @@ do local sc=buildTab("Movement")
     SRefs.InfJump=Chk(sc,"Infinite Jump",false,function(v)InfJump=v Notify("Movement",v and"Inf Jump ON"or"OFF")end,6)
     Sec(sc,"UTILITY",7)
     SRefs.AntiAFK=Chk(sc,"Anti-AFK",false,function(v)AntiAFK=v Notify("Movement",v and"Anti-AFK ON"or"OFF")end,8)
-    Sec(sc,"CFRAME MOVEMENT",9)
-    SRefs.CFMove=Chk(sc,"CFrame Move",false,function(v)CFMove=v Notify("Movement",v and"CF Move ON"or"OFF")end,10)
-    SRefs.CFSpeed=Sld(sc,"CF Speed",8,120,24,1,function(v)CFSpeed=v end,11)
-    SRefs.CFJump=Sld(sc,"CF Jump",4,80,18,1,function(v)CFJump=v end,12)
+    SRefs.NoClip=Chk(sc,"No Clip",false,function(v)NoClip=v Notify("Movement",v and"No Clip ON"or"OFF")end,9)
+    SRefs.SprintBoost=Chk(sc,"Sprint Boost (Shift)",false,function(v)SprintBoost=v Notify("Movement",v and"Sprint Boost ON"or"OFF")end,10)
+    SRefs.SprintMult=Sld(sc,"Sprint Mult",1.1,2.5,SprintMult,0.05,function(v)SprintMult=v end,11)
+    Sec(sc,"CFRAME MOVEMENT",12)
+    SRefs.CFMove=Chk(sc,"CFrame Move",false,function(v)CFMove=v Notify("Movement",v and"CF Move ON"or"OFF")end,13)
+    SRefs.CFSpeed=Sld(sc,"CF Speed",8,120,24,1,function(v)CFSpeed=v end,14)
+    SRefs.CFJump=Sld(sc,"CF Jump",4,80,18,1,function(v)CFJump=v end,15)
 end
 
 -- PLAYERS
@@ -528,24 +600,25 @@ do local sc=buildTab("Config")
     pcall(function() if typeof(makefolder)=="function" then if typeof(isfolder)=="function" then if not isfolder(cfgFolder) then makefolder(cfgFolder) end else pcall(makefolder,cfgFolder) end end end)
 
     local function cap()
-        return{AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,AimFOV=AimFOV,AimStrength=AimStrength,AimMaxDistance=AimMaxDist,Prediction=Pred*100,VisibleCheck=VisChk,TeamCheck=TeamChk,AimPartIndex=AimPI,AimMethodIndex=AimMI,SilentAimEnabled=SAEnabled,SilentAimFOV=SAFOV,SilentVisCheck=SAVis,SilentTeamCheck=SATeam,TriggerbotEnabled=TBEnabled,TriggerbotDelay=TBDelay*1000,TriggerbotThreshold=TBThresh,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,RadarRange=RadarRange,WalkSpeed=WS,JumpPower=JP,CameraFOV=CFOV,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK}
+        return{AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,AimFOV=AimFOV,AimStrength=AimStrength,AimMaxDistance=AimMaxDist,Prediction=Pred*100,VisibleCheck=VisChk,TeamCheck=TeamChk,ShowAimFOV=ShowAimFOV,AimPartIndex=AimPI,AimMethodIndex=AimMI,SilentAimEnabled=SAEnabled,SilentAimFOV=SAFOV,ShowSilentFOV=ShowSilentFOV,SilentVisCheck=SAVis,SilentTeamCheck=SATeam,TriggerbotEnabled=TBEnabled,TriggerbotDelay=TBDelay*1000,TriggerbotThreshold=TBThresh,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,RadarRange=RadarRange,WalkSpeed=WS,JumpPower=JP,CameraFOV=CFOV,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,NoClip=NoClip,SprintBoost=SprintBoost,SprintMult=SprintMult}
     end
 
     local function applyS(s)
         AimbotEnabled=s.AimbotEnabled or false AimbotAlwaysOn=s.AimbotAlwaysOn or false
         AimFOV=s.AimFOV or 120 AimStrength=s.AimStrength or 7 AimMaxDist=s.AimMaxDistance or 500 Pred=(s.Prediction or 0)/100
-        VisChk=s.VisibleCheck or false TeamChk=s.TeamCheck~=nil and s.TeamCheck or true
+        VisChk=s.VisibleCheck or false TeamChk=s.TeamCheck~=nil and s.TeamCheck or true ShowAimFOV=s.ShowAimFOV~=nil and s.ShowAimFOV or true
         AimPI=s.AimPartIndex or 1 AimMI=s.AimMethodIndex or 1
-        SAEnabled=s.SilentAimEnabled or false SAFOV=s.SilentAimFOV or 120 SAVis=s.SilentVisCheck or false SATeam=s.SilentTeamCheck~=nil and s.SilentTeamCheck or true
+        SAEnabled=s.SilentAimEnabled or false SAFOV=s.SilentAimFOV or 120 ShowSilentFOV=s.ShowSilentFOV~=nil and s.ShowSilentFOV or true SAVis=s.SilentVisCheck or false SATeam=s.SilentTeamCheck~=nil and s.SilentTeamCheck or true
         TBEnabled=s.TriggerbotEnabled or false TBDelay=(s.TriggerbotDelay or 50)/1000 TBThresh=s.TriggerbotThreshold or 12 TBTeam=s.TriggerbotTeamCheck~=nil and s.TriggerbotTeamCheck or true TBVis=s.TriggerbotVisCheck or false
         BoneESP=s.BoneESP or false BoxESP=s.BoxESP or false NameESP=s.NameESP or false DistESP=s.DistESP or false TracerESP=s.TracerESP or false HBarESP=s.HBarESP or false
         ChamsOn=s.ChamsOn or false RainbowOn=s.RainbowOn or false RadarOn=s.RadarOn or false RadarRange=s.RadarRange or 100
         WS=s.WalkSpeed or 16 JP=s.JumpPower or 50 CFOV=s.CameraFOV or 70 CFMove=s.CFMove or false InfJump=s.InfJump or false AntiAFK=s.AntiAFK or false
+        NoClip=s.NoClip or false SprintBoost=s.SprintBoost or false SprintMult=s.SprintMult or 1.35
         if SAEnabled then hookSA()else unhookSA()end if not ChamsOn then clearChams()end RF.Visible=RadarOn
         -- Sync UI
-        local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,TgtInfo=TgtInfo}
+        local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,ShowAimFOV=ShowAimFOV,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,ShowSilentFOV=ShowSilentFOV,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,NoClip=NoClip,SprintBoost=SprintBoost,TgtInfo=TgtInfo}
         for k,v in pairs(ck) do if SRefs[k] then pcall(function()SRefs[k](v)end) end end
-        local sl={{k="AimFOV",v=AimFOV},{k="AimStrength",v=11-AimStrength},{k="AimMaxDistance",v=AimMaxDist},{k="Prediction",v=Pred*100},{k="SilentAimFOV",v=SAFOV},{k="TriggerbotDelay",v=TBDelay*1000},{k="TriggerbotThreshold",v=TBThresh},{k="WalkSpeed",v=WS},{k="JumpPower",v=JP},{k="CameraFOV",v=CFOV},{k="RadarRange",v=RadarRange},{k="CFSpeed",v=CFSpeed},{k="CFJump",v=CFJump}}
+        local sl={{k="AimFOV",v=AimFOV},{k="AimStrength",v=AimStrength},{k="AimMaxDistance",v=AimMaxDist},{k="Prediction",v=Pred*100},{k="SilentAimFOV",v=SAFOV},{k="TriggerbotDelay",v=TBDelay*1000},{k="TriggerbotThreshold",v=TBThresh},{k="WalkSpeed",v=WS},{k="JumpPower",v=JP},{k="CameraFOV",v=CFOV},{k="RadarRange",v=RadarRange},{k="CFSpeed",v=CFSpeed},{k="CFJump",v=CFJump},{k="SprintMult",v=SprintMult}}
         for _,e in ipairs(sl) do if SRefs[e.k] then pcall(function()SRefs[e.k](e.v)end) end end
         if DRefs.HitPart then DRefs.HitPart.setValue(AimPI) end if DRefs.AimMethod then DRefs.AimMethod.setValue(AimMI) end
     end
@@ -651,7 +724,7 @@ do local sc=buildTab("Client")
     Sec(sc,"HOOK STATUS",7)
     local hk=newInst("Frame",{LayoutOrder=8,Size=UDim2.new(1,0,0,56),BackgroundColor3=T.Card},sc) corner(hk,10) stroke(hk,T.Brd)
     local hkDots,hkStats,hkGlows={},{},{}
-    for i,d in ipairs({{"__namecall hook",8},{"triggerbot input",30}}) do
+    for i,d in ipairs({{"silent-aim hooks",8},{"triggerbot input",30}}) do
         local dot=newInst("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.fromOffset(12,d[2]+4),BackgroundColor3=T.TD},hk) corner(dot,99)
         local dg=newInst("Frame",{Size=UDim2.fromOffset(13,13),Position=UDim2.fromOffset(9,d[2]+1),BackgroundColor3=T.TD,BackgroundTransparency=0.85},hk) corner(dg,99)
         lbl(hk,{Size=UDim2.new(1,-80,0,16),Position=UDim2.fromOffset(26,d[2]),TextSize=11,Text=d[1]})
@@ -659,16 +732,23 @@ do local sc=buildTab("Client")
         hkDots[i]=dot hkStats[i]=sl hkGlows[i]=dg
     end
     task.spawn(function() while not Unloaded do
-        if SAHooked then hkDots[1].BackgroundColor3=T.On hkStats[1].TextColor3=T.On hkGlows[1].BackgroundColor3=T.On hkStats[1].Text=SAOrig and"hooked"or"spoof" else hkDots[1].BackgroundColor3=T.TD hkStats[1].TextColor3=T.TD hkGlows[1].BackgroundColor3=T.TD hkStats[1].Text="inactive" end
+        if SAHooked then hkDots[1].BackgroundColor3=T.On hkStats[1].TextColor3=T.On hkGlows[1].BackgroundColor3=T.On hkStats[1].Text="active" else hkDots[1].BackgroundColor3=T.TD hkStats[1].TextColor3=T.TD hkGlows[1].BackgroundColor3=T.TD hkStats[1].Text="inactive" end
         if TBEnabled then hkDots[2].BackgroundColor3=T.Acc hkStats[2].TextColor3=T.Acc hkGlows[2].BackgroundColor3=T.Acc hkStats[2].Text=typeof(mouse1click)=="function" and"mouse1click"or"mouse1press" else hkDots[2].BackgroundColor3=T.TD hkStats[2].TextColor3=T.TD hkGlows[2].BackgroundColor3=T.TD hkStats[2].Text="inactive" end
         task.wait(.5)
     end end)
 end
 
 -- FOV circles
-local FC=newInst("Frame",{AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Visible=false},SG) corner(FC,99) local FCS=stroke(FC,T.Acc,1.5,.4)
-local SAFC=newInst("Frame",{AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Visible=false},SG) corner(SAFC,99) local SAFCS=stroke(SAFC,rgb(100,200,255),1.2,.45)
-local FDot=newInst("Frame",{Size=UDim2.fromOffset(4,4),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=T.Acc,Visible=false},SG) corner(FDot,99)
+local function mkCircle()
+    if not Drawing or type(Drawing.new)~="function" then return nil end
+    local ok,obj=pcall(Drawing.new,"Circle")
+    return ok and obj or nil
+end
+local function setDraw(o,k,v) if o then pcall(function() o[k]=v end) end end
+local FC,SAFC,FDot=mkCircle(),mkCircle(),mkCircle()
+if FC then setDraw(FC,"Filled",false) setDraw(FC,"Thickness",1.8) setDraw(FC,"Transparency",.45) setDraw(FC,"Visible",false) setDraw(FC,"Color",T.Acc) end
+if SAFC then setDraw(SAFC,"Filled",false) setDraw(SAFC,"Thickness",1.5) setDraw(SAFC,"Transparency",.5) setDraw(SAFC,"Visible",false) setDraw(SAFC,"Color",rgb(100,200,255)) end
+if FDot then setDraw(FDot,"Filled",true) setDraw(FDot,"NumSides",16) setDraw(FDot,"Radius",2.2) setDraw(FDot,"Transparency",.95) setDraw(FDot,"Visible",false) setDraw(FDot,"Color",T.Acc) end
 
 -- Character hooks
 local function hookChar(p)
@@ -684,9 +764,9 @@ conn(Plrs.PlayerRemoving,function(p) if CharConns[p] then pcall(function()CharCo
 conn(UIS.InputBegan,function(i,gp)
     if gp then return end
     if i.KeyCode==Enum.KeyCode.Insert then Main.Visible=not Main.Visible Notify("Mars Solutions",Main.Visible and"Menu opened"or"Menu hidden — [Insert] to reopen") end
-    if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=true FC.Visible=true FDot.Visible=true end
+    if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=true end
 end)
-conn(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=false FC.Visible=false FDot.Visible=false end end)
+conn(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=false LockedAimPart=nil LockedAimPlr=nil end end)
 
 -- Window controls
 local minimized=false local fullSize=UDim2.fromOffset(WW,WH)
@@ -699,6 +779,7 @@ end)
 local function unload()
     if Unloaded then return end Unloaded=true clearAllESP() clearChams()
     if ijConn then pcall(function()ijConn:Disconnect()end) end unhookSA()
+    for _,o in ipairs({FC,SAFC,FDot}) do if o then pcall(function()o:Remove()end) end end
     for _,c in pairs(CharConns) do pcall(function()c:Disconnect()end) end table.clear(CharConns)
     for _,c in ipairs(Conns) do pcall(function()c:Disconnect()end) end table.clear(Conns)
     SG:Destroy()
@@ -711,17 +792,17 @@ conn(RS.RenderStepped,function(dt)
     if Unloaded then return end
     rhue=(rhue+dt*.2)%1
     local ec=espCol()
-    FCS.Color=ec SAFCS.Color=RainbowOn and ec or rgb(100,200,255)
+    if FC then setDraw(FC,"Color",ec) end if SAFC then setDraw(SAFC,"Color",RainbowOn and ec or rgb(100,200,255)) end if FDot then setDraw(FDot,"Color",ec) end
     local ctr=Cam.ViewportSize/2
-    FC.Size=UDim2.fromOffset(AimFOV*2,AimFOV*2) FC.Position=UDim2.fromOffset(ctr.X,ctr.Y) FDot.Position=UDim2.fromOffset(ctr.X,ctr.Y)
-    SAFC.Visible=SAEnabled SAFC.Size=UDim2.fromOffset(SAFOV*2,SAFOV*2) SAFC.Position=UDim2.fromOffset(ctr.X,ctr.Y)
+    if FC then setDraw(FC,"Visible",ShowAimFOV and (AimbotEnabled and (ADS or AimbotAlwaysOn))) setDraw(FC,"Position",Vector2.new(ctr.X,ctr.Y)) setDraw(FC,"Radius",AimFOV) end
+    if FDot then FDot.Visible=(FC~=nil and FC.Visible) or false FDot.Position=Vector2.new(ctr.X,ctr.Y) end
+    if SAFC then setDraw(SAFC,"Visible",ShowSilentFOV and SAEnabled) setDraw(SAFC,"Position",Vector2.new(ctr.X,ctr.Y)) setDraw(SAFC,"Radius",SAFOV) end
     -- Silent Aim is purely server-side via __namecall hook — no camera movement here
     local aim,aimPl=getTarget()
     if AimbotEnabled and (ADS or AimbotAlwaysOn) and aim then
-        local tf=CFrame.new(Cam.CFrame.Position,aimPt(aim))
-        if AimMethods[AimMI]=="Mouse" then Cam.CFrame=tf else Cam.CFrame=Cam.CFrame:Lerp(tf,math.clamp(AimStrength/10,.08,1)) end
-        if not fovPulse then fovPulse=true tw(FCS,{Transparency=.15},.06) task.delay(.14,function() if not Unloaded then tw(FCS,{Transparency=.4},.1) task.delay(.12,function()fovPulse=false end) end end) end
-    else fovPulse=false end
+        applyAim(aimPt(aim),dt)
+        if FC and not fovPulse then fovPulse=true setDraw(FC,"Transparency",.85) task.delay(.14,function() if not Unloaded and FC then setDraw(FC,"Transparency",.45) fovPulse=false end end) end
+    else fovPulse=false if FC then setDraw(FC,"Transparency",.45) end end
     if TBEnabled then local tt=getCrosshairTgt() if tt then local now=tick() if now-lastTB>=TBDelay then lastTB=now if typeof(mouse1click)=="function" then pcall(mouse1click) elseif typeof(mouse1press)=="function" then pcall(mouse1press) task.delay(math.max(.04,TBDelay*.5),function()if not Unloaded then pcall(function()if typeof(mouse1release)=="function" then mouse1release()end end)end end) end end end end
     if TgtInfo and aim and aimPl then
         local tc=aimPl.Character local th=tc and tc:FindFirstChildOfClass("Humanoid") local tr2=tc and tc:FindFirstChild("HumanoidRootPart")
@@ -750,7 +831,15 @@ end)
 conn(RS.Heartbeat,function()
     if Unloaded then return end
     local ch=LP.Character if ch then
-        local hm=ch:FindFirstChildOfClass("Humanoid") if hm then if hm.WalkSpeed~=WS then hm.WalkSpeed=WS end if hm.JumpPower~=JP then hm.JumpPower=JP end end
+        local hm=ch:FindFirstChildOfClass("Humanoid") if hm then
+            local tws=WS
+            if SprintBoost and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then tws=math.floor(WS*SprintMult+.5) end
+            if hm.WalkSpeed~=tws then hm.WalkSpeed=tws end
+            if hm.JumpPower~=JP then hm.JumpPower=JP end
+        end
+        if NoClip then
+            for _,bp in ipairs(ch:GetDescendants()) do if bp:IsA("BasePart") and bp.CanCollide then bp.CanCollide=false end end
+        end
         if Cam.FieldOfView~=CFOV then Cam.FieldOfView=CFOV end
         if CFMove then local hrp=ch:FindFirstChild("HumanoidRootPart") if hrp then local mv=Vector3.zero
             if UIS:IsKeyDown(Enum.KeyCode.W) then mv+=Cam.CFrame.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then mv-=Cam.CFrame.LookVector end
@@ -773,7 +862,17 @@ conn(RS.Stepped,function()
             -- Bones
             if BoneESP and hm then
                 local rig=hm.RigType==Enum.HumanoidRigType.R15 and BR15 or BR6 BoneLines[p]=BoneLines[p] or {}
-                for i,pr2 in ipairs(rig) do local a=ch:FindFirstChild(pr2[1]) local b=ch:FindFirstChild(pr2[2]) if a and b then local ap,av=Cam:WorldToViewportPoint(a.Position) local bp,bv=Cam:WorldToViewportPoint(b.Position) local ln=BoneLines[p][i] or newLine(2) BoneLines[p][i]=ln if ln then ln.Color=ec ln.Visible=av and bv if ln.Visible then ln.From=Vector2.new(ap.X,ap.Y) ln.To=Vector2.new(bp.X,bp.Y) end end end end
+                for i,pr2 in ipairs(rig) do
+                    local ln=BoneLines[p][i] or newLine(2) BoneLines[p][i]=ln
+                    local a=ch:FindFirstChild(pr2[1]) local b=ch:FindFirstChild(pr2[2])
+                    if ln and a and b then
+                        local ap,av=Cam:WorldToViewportPoint(a.Position) local bp,bv=Cam:WorldToViewportPoint(b.Position)
+                        ln.Color=ec ln.Visible=av and bv
+                        if ln.Visible then ln.From=Vector2.new(ap.X,ap.Y) ln.To=Vector2.new(bp.X,bp.Y) end
+                    elseif ln then
+                        ln.Visible=false
+                    end
+                end
             elseif BoneLines[p] then for _,l in pairs(BoneLines[p]) do if l then l.Visible=false end end end
             -- Tracers
             if TracerESP and root then local pos,vis=Cam:WorldToViewportPoint(root.Position) TracerLines[p]=TracerLines[p] or newLine(1.4) local tr3=TracerLines[p] if tr3 then tr3.Color=ec tr3.Visible=vis if vis then tr3.From=Vector2.new(ctr.X,Cam.ViewportSize.Y) tr3.To=Vector2.new(pos.X,pos.Y) end end elseif TracerLines[p] then TracerLines[p].Visible=false end
