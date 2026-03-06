@@ -128,6 +128,9 @@ local BoneLines   = {}
 local TracerLines = {}
 local BoxLines    = {}
 
+-- Dropdown refs (set by Combat tab, read by Config tab applyState)
+local DropdownRefs = {}
+
 -- Silent Aim hook
 local SAHooked           = false
 local SAOriginalNamecall = nil
@@ -1446,6 +1449,21 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         end
     end)
 
+    -- Expose setValue so applyState can sync the label
+    local ctrl = {}
+    ctrl.setValue = function(newIdx)
+        if options[newIdx] then
+            idx = newIdx
+            btn.Text = options[newIdx]
+            for _, child in ipairs(dropList:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child.TextColor3 = child.Text == options[newIdx] and Theme.TextAccent or Theme.TextSecond
+                end
+            end
+        end
+    end
+    return ctrl
+
     -- Close if window moves (reposition) or user clicks elsewhere
     connect(UIS.InputBegan, function(i, gp)
         if open and i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1609,8 +1627,10 @@ do
     Slider(A, "Smoothing",     1,  10, AimStrength,    1,   function(v) AimStrength = 11 - v end, 7)
     Slider(A, "Max Distance", 50, 2000, AimMaxDistance, 50, function(v) AimMaxDistance = v end, 8)
     Slider(A, "Prediction",    0,  30, 0,              1,   function(v) Prediction = v / 100 end, 9)
-    Dropdown(A, "Hit Part",   AimPartOptions,   1, function(i) AimPartIndex = i end, 10)
-    Dropdown(A, "Aim Method", AimMethodOptions, 1, function(i) AimMethodIndex = i end, 11)
+    local ddHitPart   = Dropdown(A, "Hit Part",   AimPartOptions,   1, function(i) AimPartIndex = i end, 10)
+    local ddAimMethod = Dropdown(A, "Aim Method", AimMethodOptions, 1, function(i) AimMethodIndex = i end, 11)
+    DropdownRefs.HitPart   = ddHitPart
+    DropdownRefs.AimMethod = ddAimMethod
 
     -- ── Silent Aim sub-page
     local S = subPages["Silent Aim"]
@@ -1875,6 +1895,9 @@ do
         CameraFOV        = s.CameraFOV       or 70
         CFrameMoveEnabled = s.CFrameMoveEnabled or false
         if SilentAimEnabled then hookSilentAim() else unhookSilentAim() end
+        -- Sync dropdown button labels to match new state
+        if DropdownRefs.HitPart   then DropdownRefs.HitPart.setValue(AimPartIndex) end
+        if DropdownRefs.AimMethod then DropdownRefs.AimMethod.setValue(AimMethodIndex) end
     end
 
     -- JSON encode/decode (minimal, no external deps)
@@ -1915,17 +1938,21 @@ do
     end
 
     local function loadConfig()
-        pcall(function()
-            if typeof(readfile) == "function" and typeof(isfile) == "function" and isfile(configFile) then
-                local data = readfile(configFile)
+        if typeof(readfile) ~= "function" then
+            Notify("Config", "readfile not supported on this executor")
+            return
+        end
+        local ok, data = pcall(readfile, configFile)
+        if ok and data and #data > 0 then
+            pcall(function()
                 applyState(decodeJSON(data))
                 setConfigBadge("Custom", Theme.TextSecond)
                 Notify("Config", "Loaded " .. configFile)
                 logSession("Config loaded")
-            else
-                Notify("Config", "No saved config found for this game")
-            end
-        end)
+            end)
+        else
+            Notify("Config", "No saved config found — save one first")
+        end
     end
 
     -- ── Preset definitions
