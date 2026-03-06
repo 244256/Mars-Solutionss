@@ -4,6 +4,7 @@
 -- Services
 local Plrs,UIS,RS,TS,MPS,Stats = game:GetService("Players"),game:GetService("UserInputService"),game:GetService("RunService"),game:GetService("TweenService"),game:GetService("MarketplaceService"),game:GetService("Stats")
 local Cam,LP = workspace.CurrentCamera, game:GetService("Players").LocalPlayer
+local Mouse=LP:GetMouse()
 
 -- Theme
 local T={
@@ -29,7 +30,7 @@ local ChamsOn=false local ChamsColor=Color3.fromRGB(220,50,50)
 local RainbowOn,rhue=false,0
 local BoneLines,TracerLines,BoxLines,HBarLines,NameLbls,DistLbls,ChamsInst={},{},{},{},{},{},{}
 local DRefs,SRefs={},{}
-local SAHooked,SAOrig=false,nil
+local SAHooked,SAOrigNC,SAOrigIdx=false,nil,nil
 local SessStart=tick() local SessLog={} local ActiveCfg="Custom"
 local Conns,CharConns,Unloaded,ThumbCache,sFrame={},{},false,{},0
 local CachedPl={} local function rPC() CachedPl=Plrs:GetPlayers() end rPC()
@@ -156,28 +157,62 @@ local function getSATgt()
 end
 
 -- Silent Aim hook
+local function saTargetData()
+    local tgt=getSATgt()
+    if not tgt then return nil,nil end
+    return tgt,aimPt(tgt)
+end
+
 local function hookSA()
     if SAHooked then return end
     local ok=pcall(function()
-        local mt=getrawmetatable(game) local old=mt.__namecall SAOrig=old
+        local mt=getrawmetatable(game)
+        SAOrigNC,SAOrigIdx=mt.__namecall,mt.__index
         setreadonly(mt,false)
         mt.__namecall=newcclosure(function(self,...)
             local m=getnamecallmethod()
+            local args={...}
             if SAEnabled and (m=="FireServer" or m=="InvokeServer") then
-                local tool=LP.Character and LP.Character:FindFirstChildOfClass("Tool")
-                if tool then local tgt=getSATgt() if tgt then
-                    local ocf=Cam.CFrame Cam.CFrame=CFrame.new(Cam.CFrame.Position,tgt.Position)
-                    local r={old(self,...)} Cam.CFrame=ocf return table.unpack(r)
-                end end
-            end return old(self,...)
+                local _,spos=saTargetData()
+                if spos then
+                    for i,v in ipairs(args) do
+                        if typeof(v)=="Vector3" then
+                            args[i]=spos
+                        elseif typeof(v)=="CFrame" then
+                            args[i]=CFrame.new(spos)
+                        end
+                    end
+                    return SAOrigNC(self,table.unpack(args))
+                end
+            end
+            return SAOrigNC(self,...)
+        end)
+        mt.__index=newcclosure(function(self,k)
+            if SAEnabled and self==Mouse and (k=="Hit" or k=="Target") then
+                local tgt,spos=saTargetData()
+                if k=="Hit" and spos then
+                    return CFrame.new(spos)
+                elseif k=="Target" and tgt then
+                    return tgt
+                end
+            end
+            return SAOrigIdx(self,k)
         end)
         setreadonly(mt,true)
     end)
-    SAHooked=true logS("SA hook "..(ok and "__namecall" or "spoof"))
+    SAHooked=ok
+    logS("SA hook "..(ok and "active" or "failed"))
 end
 local function unhookSA()
     if not SAHooked then return end
-    pcall(function() if SAOrig then local mt=getrawmetatable(game) setreadonly(mt,false) mt.__namecall=SAOrig setreadonly(mt,true) SAOrig=nil end end)
+    pcall(function()
+        local mt=getrawmetatable(game)
+        setreadonly(mt,false)
+        if SAOrigNC then mt.__namecall=SAOrigNC end
+        if SAOrigIdx then mt.__index=SAOrigIdx end
+        setreadonly(mt,true)
+    end)
+    SAOrigNC,SAOrigIdx=nil,nil
     SAHooked=false
 end
 
@@ -264,9 +299,7 @@ local Main=newInst("Frame",{Size=UDim2.fromOffset(WW,WH),Position=UDim2.new(.5,-
 local IH,TBH,HH=30,32,62
 local Hdr=newInst("Frame",{Size=UDim2.new(1,0,0,HH),BackgroundColor3=T.BGS},Main) corner(Hdr,14)
 newInst("Frame",{Size=UDim2.new(1,0,0,14),Position=UDim2.new(0,0,1,-14),BackgroundColor3=T.BGS},Hdr)
-newInst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,HH),BackgroundColor3=T.Sep},Main)
 local IR=newInst("Frame",{Size=UDim2.new(1,0,0,IH),BackgroundTransparency=1},Hdr)
-newInst("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,IH),BackgroundColor3=T.Sep},Hdr)
 
 -- Identity labels
 for _,d in ipairs({{"MARS",Enum.Font.GothamBold,13,T.TP,12},{"Solutions",Enum.Font.Gotham,11,T.TS,54},{"v5",Enum.Font.GothamBold,11,T.Acc,118}}) do
@@ -457,7 +490,7 @@ do local sc=buildTab("Combat")
     SRefs.VisibleCheck=Chk(sc,"Visible Check",false,function(v)VisChk=v end,5)
     Sec(sc,"AIM SETTINGS",6)
     SRefs.AimFOV=Sld(sc,"FOV",40,300,AimFOV,1,function(v)AimFOV=v end,7)
-    SRefs.AimStrength=Sld(sc,"Smoothing",1,10,7,1,function(v)AimStrength=11-v end,8)
+    SRefs.AimStrength=Sld(sc,"Smoothing",1,10,7,1,function(v)AimStrength=v end,8)
     SRefs.AimMaxDistance=Sld(sc,"Max Distance",50,2000,AimMaxDist,50,function(v)AimMaxDist=v end,9)
     SRefs.Prediction=Sld(sc,"Prediction",0,30,0,1,function(v)Pred=v/100 end,10)
     SRefs.ShowAimFOV=Chk(sc,"Show Aimbot FOV",true,function(v)ShowAimFOV=v end,11)
@@ -555,7 +588,7 @@ do local sc=buildTab("Config")
         -- Sync UI
         local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,ShowAimFOV=ShowAimFOV,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,ShowSilentFOV=ShowSilentFOV,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,TgtInfo=TgtInfo}
         for k,v in pairs(ck) do if SRefs[k] then pcall(function()SRefs[k](v)end) end end
-        local sl={{k="AimFOV",v=AimFOV},{k="AimStrength",v=11-AimStrength},{k="AimMaxDistance",v=AimMaxDist},{k="Prediction",v=Pred*100},{k="SilentAimFOV",v=SAFOV},{k="TriggerbotDelay",v=TBDelay*1000},{k="TriggerbotThreshold",v=TBThresh},{k="WalkSpeed",v=WS},{k="JumpPower",v=JP},{k="CameraFOV",v=CFOV},{k="RadarRange",v=RadarRange},{k="CFSpeed",v=CFSpeed},{k="CFJump",v=CFJump}}
+        local sl={{k="AimFOV",v=AimFOV},{k="AimStrength",v=AimStrength},{k="AimMaxDistance",v=AimMaxDist},{k="Prediction",v=Pred*100},{k="SilentAimFOV",v=SAFOV},{k="TriggerbotDelay",v=TBDelay*1000},{k="TriggerbotThreshold",v=TBThresh},{k="WalkSpeed",v=WS},{k="JumpPower",v=JP},{k="CameraFOV",v=CFOV},{k="RadarRange",v=RadarRange},{k="CFSpeed",v=CFSpeed},{k="CFJump",v=CFJump}}
         for _,e in ipairs(sl) do if SRefs[e.k] then pcall(function()SRefs[e.k](e.v)end) end end
         if DRefs.HitPart then DRefs.HitPart.setValue(AimPI) end if DRefs.AimMethod then DRefs.AimMethod.setValue(AimMI) end
     end
@@ -661,7 +694,7 @@ do local sc=buildTab("Client")
     Sec(sc,"HOOK STATUS",7)
     local hk=newInst("Frame",{LayoutOrder=8,Size=UDim2.new(1,0,0,56),BackgroundColor3=T.Card},sc) corner(hk,10) stroke(hk,T.Brd)
     local hkDots,hkStats,hkGlows={},{},{}
-    for i,d in ipairs({{"__namecall hook",8},{"triggerbot input",30}}) do
+    for i,d in ipairs({{"silent-aim hooks",8},{"triggerbot input",30}}) do
         local dot=newInst("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.fromOffset(12,d[2]+4),BackgroundColor3=T.TD},hk) corner(dot,99)
         local dg=newInst("Frame",{Size=UDim2.fromOffset(13,13),Position=UDim2.fromOffset(9,d[2]+1),BackgroundColor3=T.TD,BackgroundTransparency=0.85},hk) corner(dg,99)
         lbl(hk,{Size=UDim2.new(1,-80,0,16),Position=UDim2.fromOffset(26,d[2]),TextSize=11,Text=d[1]})
@@ -669,7 +702,7 @@ do local sc=buildTab("Client")
         hkDots[i]=dot hkStats[i]=sl hkGlows[i]=dg
     end
     task.spawn(function() while not Unloaded do
-        if SAHooked then hkDots[1].BackgroundColor3=T.On hkStats[1].TextColor3=T.On hkGlows[1].BackgroundColor3=T.On hkStats[1].Text=SAOrig and"hooked"or"spoof" else hkDots[1].BackgroundColor3=T.TD hkStats[1].TextColor3=T.TD hkGlows[1].BackgroundColor3=T.TD hkStats[1].Text="inactive" end
+        if SAHooked then hkDots[1].BackgroundColor3=T.On hkStats[1].TextColor3=T.On hkGlows[1].BackgroundColor3=T.On hkStats[1].Text="active" else hkDots[1].BackgroundColor3=T.TD hkStats[1].TextColor3=T.TD hkGlows[1].BackgroundColor3=T.TD hkStats[1].Text="inactive" end
         if TBEnabled then hkDots[2].BackgroundColor3=T.Acc hkStats[2].TextColor3=T.Acc hkGlows[2].BackgroundColor3=T.Acc hkStats[2].Text=typeof(mouse1click)=="function" and"mouse1click"or"mouse1press" else hkDots[2].BackgroundColor3=T.TD hkStats[2].TextColor3=T.TD hkGlows[2].BackgroundColor3=T.TD hkStats[2].Text="inactive" end
         task.wait(.5)
     end end)
