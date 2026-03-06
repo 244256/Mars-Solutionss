@@ -25,6 +25,8 @@ local AimParts={"Head","UpperTorso","HumanoidRootPart"} local AimMethods={"Camer
 local SAEnabled,SAFOV,SAVis,SATeam=false,120,false,true
 local TBEnabled,TBDelay,TBThresh,TBVis,TBTeam,lastTB=false,0.05,12,false,true,0
 local WS,JP,CFOV,CFMove,CFSpeed,CFJump,InfJump,AntiAFK=16,50,70,false,24,18,false,false
+local NoClip,SprintBoost,SprintMult=false,false,1.35
+local LockedAimPart,LockedAimPlr,LockGraceEnd=nil,nil,0
 local BoneESP,TracerESP,BoxESP,NameESP,DistESP,HBarESP,TgtInfo,RadarOn,RadarRange=false,false,false,false,false,false,false,false,100
 local ChamsOn=false local ChamsColor=Color3.fromRGB(220,50,50)
 local RainbowOn,rhue=false,0
@@ -107,17 +109,52 @@ local function bounds2D(char)
 end
 
 local function getTarget()
-    local ctr=Cam.ViewportSize/2 local best,bPlr,bDst=nil,nil,AimFOV
+    local ctr=Cam.ViewportSize/2
+    local mr=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    local function scorePart(pt)
+        if not pt then return nil end
+        if VisChk and not visChk(pt,true) then return nil end
+        if mr and (pt.Position-mr.Position).Magnitude>AimMaxDist then return nil end
+        local pos,vis=Cam:WorldToViewportPoint(aimPt(pt))
+        if not vis then return nil end
+        local d=(Vector2.new(pos.X,pos.Y)-ctr).Magnitude
+        if d>AimFOV then return nil end
+        return d
+    end
+
+    if LockedAimPlr and LockedAimPlr.Character and alive(LockedAimPlr.Character) and isEnemy(LockedAimPlr) then
+        local lockPart=LockedAimPart and LockedAimPart.Parent and LockedAimPart or aimPart(LockedAimPlr.Character)
+        local lockDist=scorePart(lockPart)
+        if lockDist then
+            LockedAimPart=lockPart
+            LockGraceEnd=tick()+0.18
+            return lockPart,LockedAimPlr
+        elseif tick()<=LockGraceEnd and lockPart then
+            return lockPart,LockedAimPlr
+        end
+    end
+
+    local best,bPlr,bDst=nil,nil,AimFOV
     for _,p in ipairs(CachedPl) do
         if p~=LP and p.Character and alive(p.Character) and isEnemy(p) then
-            local pt=aimPart(p.Character) if not pt then continue end
-            if not visChk(pt,VisChk) then continue end
-            local mr=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-            if mr and (pt.Position-mr.Position).Magnitude>AimMaxDist then continue end
-            local pos,vis=Cam:WorldToViewportPoint(aimPt(pt))
-            if vis then local d=(Vector2.new(pos.X,pos.Y)-ctr).Magnitude if d<bDst then bDst=d best=pt bPlr=p end end
+            local pt=aimPart(p.Character)
+            local d=scorePart(pt)
+            if d and d<bDst then bDst=d best=pt bPlr=p end
         end
-    end return best,bPlr
+    end
+    LockedAimPart,LockedAimPlr=best,bPlr
+    if best then LockGraceEnd=tick()+0.18 end
+    return best,bPlr
+end
+
+local function applyAim(toPos,dt)
+    local tgt=CFrame.new(Cam.CFrame.Position,toPos)
+    if AimMethods[AimMI]=="Mouse" then
+        Cam.CFrame=tgt
+        return
+    end
+    local alpha=math.clamp(((11-AimStrength)/10)*math.clamp(dt*60,.7,1.5),.14,.98)
+    Cam.CFrame=Cam.CFrame:Lerp(tgt,alpha)
 end
 
 local function applyAim(toPos,dt)
@@ -541,10 +578,13 @@ do local sc=buildTab("Movement")
     SRefs.InfJump=Chk(sc,"Infinite Jump",false,function(v)InfJump=v Notify("Movement",v and"Inf Jump ON"or"OFF")end,6)
     Sec(sc,"UTILITY",7)
     SRefs.AntiAFK=Chk(sc,"Anti-AFK",false,function(v)AntiAFK=v Notify("Movement",v and"Anti-AFK ON"or"OFF")end,8)
-    Sec(sc,"CFRAME MOVEMENT",9)
-    SRefs.CFMove=Chk(sc,"CFrame Move",false,function(v)CFMove=v Notify("Movement",v and"CF Move ON"or"OFF")end,10)
-    SRefs.CFSpeed=Sld(sc,"CF Speed",8,120,24,1,function(v)CFSpeed=v end,11)
-    SRefs.CFJump=Sld(sc,"CF Jump",4,80,18,1,function(v)CFJump=v end,12)
+    SRefs.NoClip=Chk(sc,"No Clip",false,function(v)NoClip=v Notify("Movement",v and"No Clip ON"or"OFF")end,9)
+    SRefs.SprintBoost=Chk(sc,"Sprint Boost (Shift)",false,function(v)SprintBoost=v Notify("Movement",v and"Sprint Boost ON"or"OFF")end,10)
+    SRefs.SprintMult=Sld(sc,"Sprint Mult",1.1,2.5,SprintMult,0.05,function(v)SprintMult=v end,11)
+    Sec(sc,"CFRAME MOVEMENT",12)
+    SRefs.CFMove=Chk(sc,"CFrame Move",false,function(v)CFMove=v Notify("Movement",v and"CF Move ON"or"OFF")end,13)
+    SRefs.CFSpeed=Sld(sc,"CF Speed",8,120,24,1,function(v)CFSpeed=v end,14)
+    SRefs.CFJump=Sld(sc,"CF Jump",4,80,18,1,function(v)CFJump=v end,15)
 end
 
 -- PLAYERS
@@ -584,6 +624,7 @@ do local sc=buildTab("Config")
         BoneESP=s.BoneESP or false BoxESP=s.BoxESP or false NameESP=s.NameESP or false DistESP=s.DistESP or false TracerESP=s.TracerESP or false HBarESP=s.HBarESP or false
         ChamsOn=s.ChamsOn or false RainbowOn=s.RainbowOn or false RadarOn=s.RadarOn or false RadarRange=s.RadarRange or 100
         WS=s.WalkSpeed or 16 JP=s.JumpPower or 50 CFOV=s.CameraFOV or 70 CFMove=s.CFMove or false InfJump=s.InfJump or false AntiAFK=s.AntiAFK or false
+        NoClip=s.NoClip or false SprintBoost=s.SprintBoost or false SprintMult=s.SprintMult or 1.35
         if SAEnabled then hookSA()else unhookSA()end if not ChamsOn then clearChams()end RF.Visible=RadarOn
         -- Sync UI
         local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,ShowAimFOV=ShowAimFOV,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,ShowSilentFOV=ShowSilentFOV,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,TgtInfo=TgtInfo}
@@ -709,9 +750,12 @@ do local sc=buildTab("Client")
 end
 
 -- FOV circles
-local FC=newInst("Frame",{AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Visible=false},SG) corner(FC,99) local FCS=stroke(FC,T.Acc,1.5,.4)
-local SAFC=newInst("Frame",{AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,Visible=false},SG) corner(SAFC,99) local SAFCS=stroke(SAFC,rgb(100,200,255),1.2,.45)
-local FDot=newInst("Frame",{Size=UDim2.fromOffset(4,4),AnchorPoint=Vector2.new(.5,.5),BackgroundColor3=T.Acc,Visible=false},SG) corner(FDot,99)
+local FC=Drawing and Drawing.new("Circle") or nil
+local SAFC=Drawing and Drawing.new("Circle") or nil
+local FDot=Drawing and Drawing.new("Circle") or nil
+if FC then FC.Filled=false FC.Thickness=1.8 FC.Transparency=.45 FC.Visible=false FC.Color=T.Acc end
+if SAFC then SAFC.Filled=false SAFC.Thickness=1.5 SAFC.Transparency=.5 SAFC.Visible=false SAFC.Color=rgb(100,200,255) end
+if FDot then FDot.Filled=true FDot.NumSides=16 FDot.Radius=2.2 FDot.Transparency=.95 FDot.Visible=false FDot.Color=T.Acc end
 
 -- Character hooks
 local function hookChar(p)
@@ -742,6 +786,7 @@ end)
 local function unload()
     if Unloaded then return end Unloaded=true clearAllESP() clearChams()
     if ijConn then pcall(function()ijConn:Disconnect()end) end unhookSA()
+    for _,o in ipairs({FC,SAFC,FDot}) do if o then pcall(function()o:Remove()end) end end
     for _,c in pairs(CharConns) do pcall(function()c:Disconnect()end) end table.clear(CharConns)
     for _,c in ipairs(Conns) do pcall(function()c:Disconnect()end) end table.clear(Conns)
     SG:Destroy()
@@ -754,7 +799,7 @@ conn(RS.RenderStepped,function(dt)
     if Unloaded then return end
     rhue=(rhue+dt*.2)%1
     local ec=espCol()
-    FCS.Color=ec SAFCS.Color=RainbowOn and ec or rgb(100,200,255)
+    if FC then FC.Color=ec end if SAFC then SAFC.Color=RainbowOn and ec or rgb(100,200,255) end if FDot then FDot.Color=ec end
     local ctr=Cam.ViewportSize/2
     FC.Visible=ShowAimFOV and (AimbotEnabled and (ADS or AimbotAlwaysOn))
     FDot.Visible=FC.Visible
@@ -795,7 +840,15 @@ end)
 conn(RS.Heartbeat,function()
     if Unloaded then return end
     local ch=LP.Character if ch then
-        local hm=ch:FindFirstChildOfClass("Humanoid") if hm then if hm.WalkSpeed~=WS then hm.WalkSpeed=WS end if hm.JumpPower~=JP then hm.JumpPower=JP end end
+        local hm=ch:FindFirstChildOfClass("Humanoid") if hm then
+            local tws=WS
+            if SprintBoost and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then tws=math.floor(WS*SprintMult+.5) end
+            if hm.WalkSpeed~=tws then hm.WalkSpeed=tws end
+            if hm.JumpPower~=JP then hm.JumpPower=JP end
+        end
+        if NoClip then
+            for _,bp in ipairs(ch:GetDescendants()) do if bp:IsA("BasePart") and bp.CanCollide then bp.CanCollide=false end end
+        end
         if Cam.FieldOfView~=CFOV then Cam.FieldOfView=CFOV end
         if CFMove then local hrp=ch:FindFirstChild("HumanoidRootPart") if hrp then local mv=Vector3.zero
             if UIS:IsKeyDown(Enum.KeyCode.W) then mv+=Cam.CFrame.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then mv-=Cam.CFrame.LookVector end
