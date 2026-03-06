@@ -1419,22 +1419,24 @@ do
 end
 do
     local page = TabPages["Movement"]
+    page.BackgroundTransparency = 1
     local scroll = Instance.new("ScrollingFrame", page)
     scroll.Size             = UDim2.new(1, 0, 1, 0)
     scroll.Position         = UDim2.fromOffset(0, 0)
     scroll.BackgroundTransparency = 1
-    hideScrollBar(scroll); scroll.BorderSizePixel = 0
-    scroll.CanvasSize       = UDim2.new(0,0,0,0)
+    hideScrollBar(scroll)
+    scroll.BorderSizePixel  = 0
+    scroll.CanvasSize       = UDim2.new(0, 0, 0, 0)
     local layout = Instance.new("UIListLayout", scroll)
-    layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
-    local pad = Instance.new("UIPadding", scroll)
-    pad.PaddingLeft  = UDim.new(0, 8); pad.PaddingRight  = UDim.new(0, 8)
-    pad.PaddingTop   = UDim.new(0, 6); pad.PaddingBottom = UDim.new(0, 6)
+    layout.Padding   = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local scrollPad = Instance.new("UIPadding", scroll)
+    scrollPad.PaddingLeft   = UDim.new(0, 8)
+    scrollPad.PaddingRight  = UDim.new(0, 8)
+    scrollPad.PaddingTop    = UDim.new(0, 6)
+    scrollPad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
-        scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
-    end)
-    task.defer(function()
-        scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
+        scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
     end)
     Section(scroll, "CHARACTER", 1)
     Slider(scroll, "Walk Speed", 16, 200, 16, 1, function(v) WalkSpeed = v end, 2)
@@ -2272,160 +2274,140 @@ connect(RunService.Heartbeat, function()
 end)
 connect(RunService.RenderStepped, function()
     if Unloaded then return end
-local ec = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
+    local ec     = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
+    local vp     = Camera.ViewportSize
+    local cx, cy = vp.X / 2, vp.Y
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p) then
-            local char = p.Character
-            local hum  = char:FindFirstChildOfClass("Humanoid")
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if BoneESPEnabled and hum then
-                local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
-                BoneLines[p] = BoneLines[p] or {}
-                for i, pair in ipairs(rig) do
-                    local a = char:FindFirstChild(pair[1])
-                    local b = char:FindFirstChild(pair[2])
-                    if a and b then
-                        local ap, av = Camera:WorldToViewportPoint(a.Position)
-                        local bp, bv = Camera:WorldToViewportPoint(b.Position)
-                        local line = BoneLines[p][i] or newLine(2)
-                        BoneLines[p][i] = line
-                        if line then
-                            line.Color = ec
-                            line.Visible = av and bv
-                            if line.Visible then
-                                line.From = Vector2.new(ap.X, ap.Y)
-                                line.To   = Vector2.new(bp.X, bp.Y)
-                            end
-                        end
-                    end
-                end
-            elseif BoneLines[p] then
-                for _, l in pairs(BoneLines[p]) do if l then l.Visible = false end end
-            end
-            if TracersEnabled and root then
-                local pos, vis = Camera:WorldToViewportPoint(root.Position)
-                TracerLines[p] = TracerLines[p] or newLine(1.4)
-                local tr = TracerLines[p]
-                if tr then
-                    tr.Color   = ec
-                    tr.Visible = vis
-                    if vis then
-                        tr.From = Vector2.new(center.X, Camera.ViewportSize.Y)
-                        tr.To   = Vector2.new(pos.X, pos.Y)
-                    end
-                end
-            elseif TracerLines[p] then
-                if TracerLines[p] then TracerLines[p].Visible = false end
-            end
-            if BoxESPEnabled and hum then
-                local minX, minY, maxX, maxY = getCharacterBounds2D(char)
-                BoxLines[p] = BoxLines[p] or {newLine(1.6),newLine(1.6),newLine(1.6),newLine(1.6)}
-                local ls = BoxLines[p]
-                if minX and ls then
-                    local tl = Vector2.new(minX, minY); local tr2 = Vector2.new(maxX, minY)
-                    local br = Vector2.new(maxX, maxY); local bl = Vector2.new(minX, maxY)
-                    for _, l in ipairs(ls) do if l then l.Color = ec; l.Visible = true end end
-                    if ls[1] then ls[1].From,ls[1].To = tl,tr2 end
-                    if ls[2] then ls[2].From,ls[2].To = tr2,br end
-                    if ls[3] then ls[3].From,ls[3].To = br,bl end
-                    if ls[4] then ls[4].From,ls[4].To = bl,tl end
-                    if HealthBarEnabled then
-                        if not HealthBarLines[p] then
-                            local bg   = Drawing and Drawing.new("Line") or nil
-                            local fill = Drawing and Drawing.new("Line") or nil
-                            if bg then
-                                bg.Thickness = 4; bg.Color = Color3.fromRGB(20,20,20)
-                                bg.Transparency = 1; bg.Visible = false
-                            end
-                            if fill then
-                                fill.Thickness = 3; fill.Transparency = 1; fill.Visible = false
-                            end
-                            HealthBarLines[p] = { bg = bg, fill = fill }
-                        end
-                        local hb = HealthBarLines[p]
-                        local hp = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                        local barX = minX - 6
-                        local barTop = Vector2.new(barX, minY)
-                        local barBot = Vector2.new(barX, maxY)
-                        local barFillBot = Vector2.new(barX, minY + (maxY - minY) * (1 - hp))
-                        local hpColor = hp > 0.6 and Color3.fromRGB(60, 210, 110)
-                                     or hp > 0.3 and Color3.fromRGB(255, 195, 55)
-                                     or Color3.fromRGB(220, 60, 60)
-                        if hb.bg then
-                            hb.bg.From    = barTop
-                            hb.bg.To      = barBot
-                            hb.bg.Visible = true
-                        end
-                        if hb.fill then
-                            hb.fill.From    = barFillBot
-                            hb.fill.To      = barBot
-                            hb.fill.Color   = hpColor
-                            hb.fill.Visible = hp > 0
-                        end
-                    else
-                        if HealthBarLines[p] then
-                            if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
-                            if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
-                        end
-                    end
-                elseif ls then
-                    for _, l in pairs(ls) do if l then l.Visible = false end end
-                    if HealthBarLines[p] then
-                        if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
-                        if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
-                    end
-                end
-            else
-                if BoxLines[p] then
-                    for _, l in pairs(BoxLines[p]) do if l then l.Visible = false end end
-                end
-                if HealthBarLines[p] then
-                    if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
-                    if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
-                end
-            end
-        else
-            if BoneLines[p]  then for _, l in pairs(BoneLines[p])  do if l then l.Visible = false end end end
+        if p == LocalPlayer then continue end
+        local char  = p.Character
+        local alive = char and isAlive(char) and isEnemy(p)
+        if not alive then
+            if BoneLines[p]   then for _,l in pairs(BoneLines[p]) do if l then l.Visible=false end end end
             if TracerLines[p] then TracerLines[p].Visible = false end
-            if BoxLines[p]   then for _, l in pairs(BoxLines[p])   do if l then l.Visible = false end end end
+            if BoxLines[p]    then for _,l in pairs(BoxLines[p])  do if l then l.Visible=false end end end
             if HealthBarLines[p] then
                 if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible   = false end
                 if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible = false end
             end
+            continue
+        end
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+        if BoneESPEnabled and hum then
+            local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
+            BoneLines[p] = BoneLines[p] or {}
+            for i, pair in ipairs(rig) do
+                local pa = char:FindFirstChild(pair[1])
+                local pb = char:FindFirstChild(pair[2])
+                if pa and pb then
+                    local sp, sv = Camera:WorldToViewportPoint(pa.Position)
+                    local ep, ev = Camera:WorldToViewportPoint(pb.Position)
+                    if not BoneLines[p][i] then BoneLines[p][i] = newLine(1.5) end
+                    local ln = BoneLines[p][i]
+                    if ln then
+                        if sv and ev then
+                            ln.From=Vector2.new(sp.X,sp.Y); ln.To=Vector2.new(ep.X,ep.Y)
+                            ln.Color=ec; ln.Visible=true
+                        else ln.Visible=false end
+                    end
+                end
+            end
+        else
+            if BoneLines[p] then for _,l in pairs(BoneLines[p]) do if l then l.Visible=false end end end
+        end
+        if TracersEnabled then
+            local rp, rv = Camera:WorldToViewportPoint(root.Position)
+            if not TracerLines[p] then TracerLines[p] = newLine(1.2) end
+            local tr = TracerLines[p]
+            if tr then
+                if rv then
+                    tr.From=Vector2.new(cx,cy); tr.To=Vector2.new(rp.X,rp.Y)
+                    tr.Color=ec; tr.Visible=true
+                else tr.Visible=false end
+            end
+        else
+            if TracerLines[p] then TracerLines[p].Visible=false end
+        end
+        if BoxESPEnabled and hum then
+            local minX, minY, maxX, maxY = getCharacterBounds2D(char)
+            if not BoxLines[p] then BoxLines[p]={newLine(1.5),newLine(1.5),newLine(1.5),newLine(1.5)} end
+            local ls = BoxLines[p]
+            if minX and ls then
+                local tl=Vector2.new(minX,minY); local tr2=Vector2.new(maxX,minY)
+                local br=Vector2.new(maxX,maxY); local bl=Vector2.new(minX,maxY)
+                if ls[1] then ls[1].From=tl;  ls[1].To=tr2; ls[1].Color=ec; ls[1].Visible=true end
+                if ls[2] then ls[2].From=tr2; ls[2].To=br;  ls[2].Color=ec; ls[2].Visible=true end
+                if ls[3] then ls[3].From=br;  ls[3].To=bl;  ls[3].Color=ec; ls[3].Visible=true end
+                if ls[4] then ls[4].From=bl;  ls[4].To=tl;  ls[4].Color=ec; ls[4].Visible=true end
+                if HealthBarEnabled then
+                    if not HealthBarLines[p] then
+                        local bg=Drawing and Drawing.new("Line") or nil
+                        local fill=Drawing and Drawing.new("Line") or nil
+                        if bg   then bg.Thickness=4;   bg.Color=Color3.fromRGB(15,15,15); bg.Transparency=1; bg.Visible=false end
+                        if fill then fill.Thickness=3; fill.Transparency=1; fill.Visible=false end
+                        HealthBarLines[p]={bg=bg,fill=fill}
+                    end
+                    local hb=HealthBarLines[p]
+                    local hp=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+                    local bx=minX-5
+                    local hpCol=hp>0.6 and Color3.fromRGB(60,210,110) or hp>0.3 and Color3.fromRGB(255,195,55) or Color3.fromRGB(220,60,60)
+                    if hb.bg   then hb.bg.From=Vector2.new(bx,minY); hb.bg.To=Vector2.new(bx,maxY); hb.bg.Visible=true end
+                    if hb.fill then
+                        hb.fill.From=Vector2.new(bx,maxY-(maxY-minY)*hp); hb.fill.To=Vector2.new(bx,maxY)
+                        hb.fill.Color=hpCol; hb.fill.Visible=hp>0
+                    end
+                else
+                    if HealthBarLines[p] then
+                        if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible=false end
+                        if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible=false end
+                    end
+                end
+            else
+                if ls then for _,l in pairs(ls) do if l then l.Visible=false end end end
+                if HealthBarLines[p] then
+                    if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible=false end
+                    if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible=false end
+                end
+            end
+        else
+            if BoxLines[p] then for _,l in pairs(BoxLines[p]) do if l then l.Visible=false end end end
+            if HealthBarLines[p] then
+                if HealthBarLines[p].bg   then HealthBarLines[p].bg.Visible=false end
+                if HealthBarLines[p].fill then HealthBarLines[p].fill.Visible=false end
+            end
         end
     end
     if RadarEnabled then
-        local myChar = LocalPlayer.Character
-        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-        local dotIdx = 0
+        local myChar=LocalPlayer.Character
+        local myRoot=myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local dotIdx=0
         if myRoot then
-            local myPos     = myRoot.Position
-            local forward   = Vector3.new(myRoot.CFrame.LookVector.X, 0, myRoot.CFrame.LookVector.Z).Unit
-            local right     = Vector3.new(forward.Z, 0, -forward.X)
-            local half      = RadarSize / 2
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and p.Character and isAlive(p.Character) then
-                    local tr = p.Character:FindFirstChild("HumanoidRootPart")
+            local myPos=myRoot.Position
+            local fwd=Vector3.new(myRoot.CFrame.LookVector.X,0,myRoot.CFrame.LookVector.Z).Unit
+            local rgt=Vector3.new(fwd.Z,0,-fwd.X)
+            local half=RadarSize/2; local scale=(half-6)/RadarRange
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p~=LocalPlayer and p.Character and isAlive(p.Character) then
+                    local tr=p.Character:FindFirstChild("HumanoidRootPart")
                     if tr then
-                        local diff = tr.Position - myPos
-                        if diff.Magnitude <= RadarRange then
-                            dotIdx += 1
-                            local dot  = getRadarDot(dotIdx)
-                            local flat = Vector3.new(diff.X, 0, diff.Z)
-                            local scale = (half - 6) / RadarRange
-                            local dx = math.clamp(half + flat:Dot(right) * scale, 6, RadarSize - 6)
-                            local dy = math.clamp(half - flat:Dot(forward) * scale, 6, RadarSize - 6)
-                            dot.Position         = UDim2.fromOffset(dx, dy)
-                            dot.BackgroundColor3 = isEnemy(p) and Theme.RadarEnemy or Theme.RadarSelf
-                            dot.Visible          = true
+                        local diff=tr.Position-myPos
+                        if diff.Magnitude<=RadarRange then
+                            dotIdx+=1
+                            local dot=getRadarDot(dotIdx)
+                            local flat=Vector3.new(diff.X,0,diff.Z)
+                            dot.Position=UDim2.fromOffset(
+                                math.clamp(half+flat:Dot(rgt)*scale,6,RadarSize-6),
+                                math.clamp(half-flat:Dot(fwd)*scale,6,RadarSize-6))
+                            dot.BackgroundColor3=isEnemy(p) and Theme.RadarEnemy or Theme.RadarSelf
+                            dot.Visible=true
                         end
                     end
                 end
             end
         end
-        for i = dotIdx + 1, #RadarDots do RadarDots[i].Visible = false end
+        for i=dotIdx+1,#RadarDots do RadarDots[i].Visible=false end
     end
-
 end)
 task.defer(function()
     local combatBtn = TabButtons["Combat"]
