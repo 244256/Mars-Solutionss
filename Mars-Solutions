@@ -334,16 +334,20 @@ lbl(Ftr,{Size=UDim2.new(0,160,1,0),Position=UDim2.new(1,-10,0,0),AnchorPoint=Vec
 
 -- Component builders
 local function makeScroll(parent)
-    local sf=newInst("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,CanvasSize=UDim2.new(0,0,0,0)},parent) hideBar(sf)
-    local ll=newInst("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder},sf) pad(sf,8,8,6,6)
-    conn(ll:GetPropertyChangedSignal("AbsoluteContentSize"),function() sf.CanvasSize=UDim2.new(0,0,0,ll.AbsoluteContentSize.Y+12) end)
+    local sf=newInst("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,CanvasSize=UDim2.new(0,0,0,0),ClipsDescendants=false},parent) hideBar(sf)
+    local ll=newInst("UIListLayout",{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder},sf) pad(sf,10,10,8,8)
+    conn(ll:GetPropertyChangedSignal("AbsoluteContentSize"),function() sf.CanvasSize=UDim2.new(0,0,0,ll.AbsoluteContentSize.Y+16) end)
     return sf
 end
 
 local function Sec(parent,text,ord)
-    local f=newInst("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=ord or 0},parent)
-    local l=lbl(f,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,1,0),Font=Enum.Font.GothamBold,TextSize=10,TextColor3=T.TA,Text=text,ZIndex=3})
-    newInst("Frame",{Size=UDim2.new(1,-8,0,1),Position=UDim2.new(0,4,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.Sep,ZIndex=2},f)
+    local f=newInst("Frame",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,LayoutOrder=ord or 0},parent)
+    -- Full-width separator line sits at vertical center
+    newInst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.Sep,ZIndex=1},f)
+    -- Label has a solid background so it masks the line behind it
+    local bg=newInst("Frame",{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.BG,ZIndex=2},f)
+    pad(bg,0,6,0,0)
+    lbl(bg,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,1,0),Font=Enum.Font.GothamBold,TextSize=10,TextColor3=T.TA,Text=text,ZIndex=3})
 end
 
 local function Chk(parent,text,default,cb,ord)
@@ -384,23 +388,49 @@ end
 local function DD(parent,text,opts,defIdx,cb,ord)
     local con=newInst("Frame",{Size=UDim2.new(1,0,0,46),BackgroundTransparency=1,ClipsDescendants=false,LayoutOrder=ord or 0},parent)
     lbl(con,{Size=UDim2.new(1,0,0,16),Text=text})
-    local btn=newInst("TextButton",{Size=UDim2.new(1,0,0,26),Position=UDim2.fromOffset(0,18),BackgroundColor3=T.Input,Font=Enum.Font.Gotham,TextSize=12,TextColor3=T.TP,TextXAlignment=Enum.TextXAlignment.Left},con) corner(btn,7) pad(btn,10,0,0,0)
-    lbl(btn,{Size=UDim2.fromOffset(20,26),Position=UDim2.new(1,-24,0,0),Font=Enum.Font.GothamBold,TextSize=11,TextColor3=T.TD,Text="▾",TextXAlignment=Enum.TextXAlignment.Center})
-    local chev=btn:FindFirstChildOfClass("TextLabel")
+    local btn=newInst("TextButton",{Size=UDim2.new(1,0,0,26),Position=UDim2.fromOffset(0,18),BackgroundColor3=T.Input,Font=Enum.Font.Gotham,TextSize=12,TextColor3=T.TP,TextXAlignment=Enum.TextXAlignment.Left},con) corner(btn,7) stroke(btn,T.Brd) pad(btn,10,0,0,0)
+    local chev=lbl(btn,{Size=UDim2.fromOffset(20,26),Position=UDim2.new(1,-24,0,0),Font=Enum.Font.GothamBold,TextSize=11,TextColor3=T.TD,Text="▾",TextXAlignment=Enum.TextXAlignment.Center})
     local idx=defIdx btn.Text=opts[idx] cb(idx)
-    local listH=#opts*30+8
-    local dl=newInst("Frame",{Size=UDim2.fromOffset(0,0),BackgroundColor3=T.Card,ClipsDescendants=true,ZIndex=50,Visible=false},Main) corner(dl,7) stroke(dl,T.Brd,1)
-    local dll=newInst("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder},dl) pad(dl,4,4,4,4)
+    local listH=#opts*28+8
+    -- Parent dropdown list to SG so it always renders on top, unaffected by any ClipsDescendants
+    local dl=newInst("Frame",{Size=UDim2.fromOffset(0,0),BackgroundColor3=T.Card,ClipsDescendants=true,ZIndex=200,Visible=false},SG) corner(dl,7) stroke(dl,T.Brd)
+    newInst("UIListLayout",{Padding=UDim.new(0,2),SortOrder=Enum.SortOrder.LayoutOrder},dl) pad(dl,4,4,4,4)
     local open=false
-    local function close() tw(dl,{Size=UDim2.fromOffset(dl.AbsoluteSize.X,0)},.14) task.delay(.14,function()dl.Visible=false end) tw(chev,{Rotation=0},.14) open=false end
+    local function close() open=false tw(dl,{Size=UDim2.fromOffset(dl.AbsoluteSize.X,0)},.14) task.delay(.15,function()if not open then dl.Visible=false end end) tw(chev,{Rotation=0},.14) end
+    local function reposition() local ap=btn.AbsolutePosition local as=btn.AbsoluteSize dl.Size=UDim2.fromOffset(as.X,0) dl.Position=UDim2.fromOffset(ap.X,ap.Y+as.Y+2) end
     for i,opt in ipairs(opts) do
-        local item=newInst("TextButton",{LayoutOrder=i,Size=UDim2.new(1,0,0,26),BackgroundColor3=T.Btn,Font=Enum.Font.Gotham,TextSize=12,TextColor3=i==idx and T.TA or T.TS,TextXAlignment=Enum.TextXAlignment.Left,Text=opt,ZIndex=51},dl) corner(item,6) pad(item,8,0,0,0)
-        conn(item.MouseEnter,function()tw(item,{BackgroundColor3=T.BtnH},.1)end) conn(item.MouseLeave,function()tw(item,{BackgroundColor3=T.Btn},.1)end)
-        conn(item.MouseButton1Click,function() idx=i btn.Text=opt cb(i) for _,c in ipairs(dl:GetChildren()) do if c:IsA("TextButton") then c.TextColor3=c.Text==opt and T.TA or T.TS end end close() end)
+        local item=newInst("TextButton",{LayoutOrder=i,Size=UDim2.new(1,0,0,24),BackgroundColor3=i==idx and T.BtnH or T.Btn,Font=Enum.Font.Gotham,TextSize=12,TextColor3=i==idx and T.TA or T.TS,TextXAlignment=Enum.TextXAlignment.Left,Text=opt,ZIndex=201},dl) corner(item,6) pad(item,8,0,0,0)
+        conn(item.MouseEnter,function()if i~=idx then tw(item,{BackgroundColor3=T.BtnH},.1)end end)
+        conn(item.MouseLeave,function()if i~=idx then tw(item,{BackgroundColor3=T.Btn},.1)end end)
+        conn(item.MouseButton1Click,function()
+            local prev=idx idx=i btn.Text=opt cb(i)
+            for _,c in ipairs(dl:GetChildren()) do if c:IsA("TextButton") then local isNew=c.Text==opt c.TextColor3=isNew and T.TA or T.TS c.BackgroundColor3=isNew and T.BtnH or T.Btn end end
+            close()
+        end)
     end
-    conn(btn.MouseButton1Click,function() open=not open if open then local ap=btn.AbsolutePosition local as=btn.AbsoluteSize local mp=Main.AbsolutePosition dl.Size=UDim2.fromOffset(as.X,0) dl.Position=UDim2.fromOffset(ap.X-mp.X,ap.Y-mp.Y+as.Y+2) dl.Visible=true tw(dl,{Size=UDim2.fromOffset(as.X,listH)},.16) tw(chev,{Rotation=180},.16) else close() end end)
-    conn(UIS.InputBegan,function(i) if open and i.UserInputType==Enum.UserInputType.MouseButton1 then task.defer(function() local m=UIS:GetMouseLocation() local dp=dl.AbsolutePosition local ds2=dl.AbsoluteSize local bp=btn.AbsolutePosition local bs=btn.AbsoluteSize if not(m.X>=dp.X and m.X<=dp.X+ds2.X and m.Y>=dp.Y and m.Y<=dp.Y+ds2.Y) and not(m.X>=bp.X and m.X<=bp.X+bs.X and m.Y>=bp.Y and m.Y<=bp.Y+bs.Y) then close() end end) end end)
-    return {setValue=function(ni) if opts[ni] then idx=ni btn.Text=opts[ni] for _,c in ipairs(dl:GetChildren()) do if c:IsA("TextButton") then c.TextColor3=c.Text==opts[ni] and T.TA or T.TS end end end end}
+    conn(btn.MouseButton1Click,function()
+        open=not open
+        if open then
+            reposition() dl.Visible=true tw(dl,{Size=UDim2.fromOffset(btn.AbsoluteSize.X,listH)},.16) tw(chev,{Rotation=180},.16)
+        else close() end
+    end)
+    conn(UIS.InputBegan,function(i,gp)
+        if not open or gp then return end
+        if i.UserInputType==Enum.UserInputType.MouseButton1 then
+            task.defer(function()
+                local m=UIS:GetMouseLocation()
+                local dp=dl.AbsolutePosition local ds2=dl.AbsoluteSize
+                local bp=btn.AbsolutePosition local bs=btn.AbsoluteSize
+                local inDl=m.X>=dp.X and m.X<=dp.X+ds2.X and m.Y>=dp.Y and m.Y<=dp.Y+ds2.Y
+                local inBtn=m.X>=bp.X and m.X<=bp.X+bs.X and m.Y>=bp.Y and m.Y<=bp.Y+bs.Y
+                if not inDl and not inBtn then close() end
+            end)
+        end
+    end)
+    return {setValue=function(ni)
+        if not opts[ni] then return end idx=ni btn.Text=opts[ni]
+        for _,c in ipairs(dl:GetChildren()) do if c:IsA("TextButton") then local isNew=c.Text==opts[ni] c.TextColor3=isNew and T.TA or T.TS c.BackgroundColor3=isNew and T.BtnH or T.Btn end end
+    end}
 end
 
 -- Bone maps
@@ -559,32 +589,43 @@ end
 -- CLIENT
 do local sc=buildTab("Client")
     Sec(sc,"IDENTITY",1)
-    local card=newInst("Frame",{LayoutOrder=2,Size=UDim2.new(1,0,0,188),BackgroundColor3=T.Card},sc) corner(card,12) stroke(card,T.Acc,1,.72)
-    local cg=newInst("Frame",{Size=UDim2.fromOffset(100,100),BackgroundColor3=T.Acc,BackgroundTransparency=0.92},card) corner(cg,99)
-    local av3=newInst("ImageLabel",{Size=UDim2.fromOffset(56,56),Position=UDim2.fromOffset(14,14),BackgroundColor3=T.Panel},card) corner(av3,99)
-    newInst("Frame",{Size=UDim2.fromOffset(64,64),Position=UDim2.fromOffset(10,10),BackgroundColor3=T.Acc,BackgroundTransparency=0.82},card) corner(card:FindFirstChild("Frame"),99)
+    local card=newInst("Frame",{LayoutOrder=2,Size=UDim2.new(1,0,0,76),BackgroundColor3=T.Card},sc) corner(card,12) stroke(card,T.Brd)
+    -- Left accent bar
+    newInst("Frame",{Size=UDim2.new(0,3,1,-16),Position=UDim2.fromOffset(10,8),BackgroundColor3=T.Acc},card) corner(card:FindFirstChildOfClass("Frame"),99)
+    -- Avatar
+    local av3=newInst("ImageLabel",{Size=UDim2.fromOffset(46,46),Position=UDim2.fromOffset(20,15),BackgroundColor3=T.Panel},card) corner(av3,99) stroke(av3,T.Brd)
     task.spawn(function() local ok,img=pcall(Plrs.GetUserThumbnailAsync,Plrs,LP.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100) if ok and img then av3.Image=img end end)
-    for _,d in ipairs({{LP.DisplayName,14,true,T.TP},{  "@"..LP.Name,33,false,T.TS},{"ID: "..LP.UserId,52,false,T.TD}}) do
-        lbl(card,{Size=UDim2.new(1,-86,0,18),Position=UDim2.fromOffset(78,d[2]),Font=d[3] and Enum.Font.GothamBold or Enum.Font.Gotham,TextSize=12,TextColor3=d[4],Text=d[1]})
-    end
-    local dr=newInst("Frame",{Size=UDim2.new(1,-16,0,18),Position=UDim2.fromOffset(14,80),BackgroundTransparency=1},card)
-    local sdot=newInst("Frame",{Size=UDim2.fromOffset(8,8),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.On},dr) corner(sdot,99)
-    newInst("Frame",{Size=UDim2.fromOffset(16,16),Position=UDim2.new(0,-4,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.On,BackgroundTransparency=0.8},dr) corner(dr:FindFirstChild("Frame"),99)
-    lbl(dr,{Size=UDim2.new(1,-14,1,0),Position=UDim2.fromOffset(14,0),Font=Enum.Font.GothamBold,TextSize=11,TextColor3=T.On,Text="Connected"})
-    local cExp=lbl(card,{Size=UDim2.new(1,-86,0,18),Position=UDim2.fromOffset(78,106),TextSize=12,Text="Experience: loading..."})
-    lbl(card,{Size=UDim2.new(1,-86,0,18),Position=UDim2.fromOffset(78,124),TextSize=12,TextColor3=T.TD,Text="Place: "..tostring(game.PlaceId)})
-    local cSrv=lbl(card,{Size=UDim2.new(1,-86,0,18),Position=UDim2.fromOffset(78,142),TextSize=12,TextColor3=T.TD,Text="Server: loading..."})
-    lbl(card,{Size=UDim2.new(1,-86,0,18),Position=UDim2.fromOffset(78,162),Font=Enum.Font.GothamBold,TextSize=12,TextColor3=T.On,Text="Mars Solutions v5 ● stable"})
-    task.spawn(function() local ok,info=pcall(MPS.GetProductInfo,MPS,game.PlaceId) cExp.Text="Experience: "..(ok and info and info.Name or game.Name or"Unknown") local jid=tostring(game.JobId or"N/A") cSrv.Text="Server: "..(#jid>24 and jid:sub(1,24).."..."or jid) end)
+    -- Info stack, right of avatar
+    lbl(card,{Size=UDim2.new(1,-84,0,18),Position=UDim2.fromOffset(74,10),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=T.TP,Text=LP.DisplayName or"..."})
+    lbl(card,{Size=UDim2.new(1,-84,0,14),Position=UDim2.fromOffset(74,28),TextSize=11,TextColor3=T.TS,Text="@"..(LP.Name or"...")})
+    lbl(card,{Size=UDim2.new(1,-84,0,13),Position=UDim2.fromOffset(74,44),TextSize=10,TextColor3=T.TD,Text="ID "..tostring(LP.UserId)})
+    -- Connected dot bottom-right
+    local sdot=newInst("Frame",{Size=UDim2.fromOffset(7,7),Position=UDim2.new(1,-24,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.On},card) corner(sdot,99)
+    lbl(card,{Size=UDim2.fromOffset(60,14),Position=UDim2.new(1,-88,.5,0),AnchorPoint=Vector2.new(0,.5),Font=Enum.Font.GothamBold,TextSize=9,TextColor3=T.On,Text="connected",TextXAlignment=Enum.TextXAlignment.Right})
 
-    Sec(sc,"SESSION",3)
-    local sg=newInst("Frame",{LayoutOrder=4,Size=UDim2.new(1,0,0,72),BackgroundTransparency=1},sc)
-    local sgl=newInst("UIGridLayout",{CellSize=UDim2.new(.5,-5,0,32),CellPadding=UDim2.fromOffset(8,8),SortOrder=Enum.SortOrder.LayoutOrder},sg)
+    Sec(sc,"GAME",3)
+    local gcard=newInst("Frame",{LayoutOrder=4,Size=UDim2.new(1,0,0,56),BackgroundColor3=T.Card},sc) corner(gcard,12) stroke(gcard,T.Brd) pad(gcard,14,14,10,8)
+    local gcl=newInst("UIListLayout",{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder},gcard)
+    local cExp=lbl(gcard,{Size=UDim2.new(1,0,0,13),TextSize=11,TextColor3=T.TS,Text="Experience: loading..."})
+    lbl(gcard,{Size=UDim2.new(1,0,0,13),TextSize=10,TextColor3=T.TD,Text="Place ID: "..tostring(game.PlaceId)})
+    local cSrv=lbl(gcard,{Size=UDim2.new(1,0,0,13),TextSize=10,TextColor3=T.TD,Text="Server: loading..."})
+    conn(gcl:GetPropertyChangedSignal("AbsoluteContentSize"),function() gcard.Size=UDim2.new(1,0,0,gcl.AbsoluteContentSize.Y+20) end)
+    task.spawn(function()
+        local ok,info=pcall(MPS.GetProductInfo,MPS,game.PlaceId)
+        cExp.Text="Experience: "..(ok and info and info.Name or game.Name or"Unknown")
+        local jid=tostring(game.JobId or"N/A")
+        cSrv.Text="Server: "..(#jid>30 and jid:sub(1,30).."..." or jid)
+    end)
+
+    Sec(sc,"SESSION",5)
+    local sg=newInst("Frame",{LayoutOrder=6,Size=UDim2.new(1,0,0,80),BackgroundTransparency=1},sc)
+    local sgl=newInst("UIGridLayout",{CellSize=UDim2.new(.5,-5,0,34),CellPadding=UDim2.fromOffset(8,6),SortOrder=Enum.SortOrder.LayoutOrder},sg)
+    conn(sgl:GetPropertyChangedSignal("AbsoluteContentSize"),function() sg.Size=UDim2.new(1,0,0,sgl.AbsoluteContentSize.Y+2) end)
     local statLbls={}
     for _,d in ipairs({{"Uptime","0s"},{"Active","0"},{"Ping","--ms"},{"Players","--"}}) do
-        local tile=newInst("Frame",{BackgroundColor3=T.Card},sg) corner(tile,10) stroke(tile,T.Brd)
-        local vl=lbl(tile,{Size=UDim2.new(1,0,0,18),Position=UDim2.new(0,0,0,4),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=T.TP,Text=d[2]})
-        lbl(tile,{Size=UDim2.new(1,0,0,13),Position=UDim2.new(0,0,0,19),TextSize=10,TextColor3=T.TD,Text=d[1]})
+        local tile=newInst("Frame",{BackgroundColor3=T.Card},sg) corner(tile,10) stroke(tile,T.Brd) pad(tile,10,10,7,7)
+        local vl=lbl(tile,{Size=UDim2.new(1,0,0,14),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=T.TP,Text=d[2]})
+        lbl(tile,{Size=UDim2.new(1,0,0,11),Position=UDim2.new(0,0,0,16),TextSize=9,TextColor3=T.TD,Text=d[1]})
         table.insert(statLbls,vl)
     end
     task.spawn(function() while not Unloaded do
@@ -674,7 +715,7 @@ conn(RS.RenderStepped,function(dt)
     local ctr=Cam.ViewportSize/2
     FC.Size=UDim2.fromOffset(AimFOV*2,AimFOV*2) FC.Position=UDim2.fromOffset(ctr.X,ctr.Y) FDot.Position=UDim2.fromOffset(ctr.X,ctr.Y)
     SAFC.Visible=SAEnabled SAFC.Size=UDim2.fromOffset(SAFOV*2,SAFOV*2) SAFC.Position=UDim2.fromOffset(ctr.X,ctr.Y)
-    if SAEnabled and SAHooked and not SAOrig then local t2=getSATgt() if t2 and ADS then Cam.CFrame=CFrame.new(Cam.CFrame.Position,t2.Position) end end
+    -- Silent Aim is purely server-side via __namecall hook — no camera movement here
     local aim,aimPl=getTarget()
     if AimbotEnabled and (ADS or AimbotAlwaysOn) and aim then
         local tf=CFrame.new(Cam.CFrame.Position,aimPt(aim))
@@ -682,9 +723,19 @@ conn(RS.RenderStepped,function(dt)
         if not fovPulse then fovPulse=true tw(FCS,{Transparency=.15},.06) task.delay(.14,function() if not Unloaded then tw(FCS,{Transparency=.4},.1) task.delay(.12,function()fovPulse=false end) end end) end
     else fovPulse=false end
     if TBEnabled then local tt=getCrosshairTgt() if tt then local now=tick() if now-lastTB>=TBDelay then lastTB=now if typeof(mouse1click)=="function" then pcall(mouse1click) elseif typeof(mouse1press)=="function" then pcall(mouse1press) task.delay(math.max(.04,TBDelay*.5),function()if not Unloaded then pcall(function()if typeof(mouse1release)=="function" then mouse1release()end end)end end) end end end end
-    if TgtInfo and (ADS or AimbotAlwaysOn) and aim and aimPl then
+    if TgtInfo and aim and aimPl then
         local tc=aimPl.Character local th=tc and tc:FindFirstChildOfClass("Humanoid") local tr2=tc and tc:FindFirstChild("HumanoidRootPart")
-        if tr2 then local sp,os=Cam:WorldToViewportPoint(tr2.Position) if os then TI.Position=UDim2.fromOffset(math.clamp(sp.X,120,Cam.ViewportSize.X-120),math.clamp(sp.Y-88,80,Cam.ViewportSize.Y-100)) TIdn.Text=aimPl.DisplayName or"?" TIun.Text="@"..(aimPl.Name or"?") TIhp.Text=th and string.format("HP %d/%d",math.floor(th.Health+.5),math.floor(th.MaxHealth+.5)) or"HP N/A" TIid.Text="ID: "..tostring(aimPl.UserId) if not ThumbCache[aimPl.UserId] then task.spawn(function()local ok,img=pcall(Plrs.GetUserThumbnailAsync,Plrs,aimPl.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100) if ok and img then ThumbCache[aimPl.UserId]=img end end)end TIav.Image=ThumbCache[aimPl.UserId] or"" TI.Visible=true else TI.Visible=false end else TI.Visible=false end
+        if tr2 then
+            -- Position near player on screen regardless of visibility (through-wall)
+            local sp=Cam:WorldToViewportPoint(tr2.Position)
+            TI.Position=UDim2.fromOffset(math.clamp(sp.X,120,Cam.ViewportSize.X-120),math.clamp(sp.Y-88,80,Cam.ViewportSize.Y-100))
+            TIdn.Text=aimPl.DisplayName or"?" TIun.Text="@"..(aimPl.Name or"?")
+            TIhp.Text=th and string.format("HP %d/%d",math.floor(th.Health+.5),math.floor(th.MaxHealth+.5)) or"HP N/A"
+            TIhp.TextColor3=th and(th.Health/math.max(th.MaxHealth,1)>.6 and T.On or th.Health/math.max(th.MaxHealth,1)>.3 and T.Warn or T.Off) or T.TD
+            TIid.Text="ID: "..tostring(aimPl.UserId)
+            if not ThumbCache[aimPl.UserId] then task.spawn(function()local ok,img=pcall(Plrs.GetUserThumbnailAsync,Plrs,aimPl.UserId,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size100x100) if ok and img then ThumbCache[aimPl.UserId]=img end end)end
+            TIav.Image=ThumbCache[aimPl.UserId] or"" TI.Visible=true
+        else TI.Visible=false end
     else TI.Visible=false end
     local now2=tick() if now2-lastHUD>=.25 then lastHUD=now2
         table.insert(fpsBuf,1/math.max(dt,.001)) if #fpsBuf>fpsMax then table.remove(fpsBuf,1) end
@@ -734,10 +785,22 @@ conn(RS.Stepped,function()
                     else if HBarLines[p] then if HBarLines[p].bg then HBarLines[p].bg.Visible=false end if HBarLines[p].fill then HBarLines[p].fill.Visible=false end end end
                 elseif ls then for _,l in pairs(ls) do if l then l.Visible=false end end end
             else if BoxLines[p] then for _,l in pairs(BoxLines[p]) do if l then l.Visible=false end end end if HBarLines[p] then if HBarLines[p].bg then HBarLines[p].bg.Visible=false end if HBarLines[p].fill then HBarLines[p].fill.Visible=false end end end
-            -- Names
-            if NameESP and head then local hp2,hv=Cam:WorldToViewportPoint(head.Position) NameLbls[p]=NameLbls[p] or newTxt() local nl=NameLbls[p] if nl then nl.Visible=hv if hv then nl.Text=p.DisplayName nl.Color=ec nl.Position=Vector2.new(hp2.X,hp2.Y-22) nl.Size=math.clamp(1200/math.max(hp2.Z,1),11,18) end end elseif NameLbls[p] then NameLbls[p].Visible=false end
-            -- Distance
-            if DistESP and root then local mr2=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") local dist=mr2 and math.floor((root.Position-mr2.Position).Magnitude) or 0 local rp,rv=Cam:WorldToViewportPoint(root.Position) DistLbls[p]=DistLbls[p] or newTxt() local dl2=DistLbls[p] if dl2 then dl2.Visible=rv if rv then dl2.Text=dist.."m" dl2.Color=rgb(180,180,180) dl2.Position=Vector2.new(rp.X,rp.Y+(NameESP and -38 or -22)) dl2.Size=math.clamp(1000/math.max(rp.Z,1),10,15) end end elseif DistLbls[p] then DistLbls[p].Visible=false end
+            -- Names (show through walls - only check on-screen)
+            if NameESP and head then
+                local hp2,_,hZ=Cam:WorldToViewportPoint(head.Position)
+                NameLbls[p]=NameLbls[p] or newTxt() local nl=NameLbls[p]
+                local onScr=hZ>0 and hp2.X>-50 and hp2.X<Cam.ViewportSize.X+50
+                if nl then nl.Visible=onScr if onScr then nl.Text=p.DisplayName nl.Color=ec nl.Position=Vector2.new(hp2.X,hp2.Y-22) nl.Size=math.clamp(1200/math.max(hZ,1),11,18) end end
+            elseif NameLbls[p] then NameLbls[p].Visible=false end
+            -- Distance (show through walls - only check on-screen)
+            if DistESP and root then
+                local mr2=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+                local dist=mr2 and math.floor((root.Position-mr2.Position).Magnitude) or 0
+                local rp,_,rZ=Cam:WorldToViewportPoint(root.Position)
+                DistLbls[p]=DistLbls[p] or newTxt() local dl2=DistLbls[p]
+                local onScr=rZ>0 and rp.X>-50 and rp.X<Cam.ViewportSize.X+50
+                if dl2 then dl2.Visible=onScr if onScr then dl2.Text=dist.."m" dl2.Color=rgb(180,180,180) dl2.Position=Vector2.new(rp.X,rp.Y+(NameESP and -38 or -22)) dl2.Size=math.clamp(1000/math.max(rZ,1),10,15) end end
+            elseif DistLbls[p] then DistLbls[p].Visible=false end
         else
             if BoneLines[p] then for _,l in pairs(BoneLines[p]) do if l then l.Visible=false end end end if TracerLines[p] then TracerLines[p].Visible=false end if BoxLines[p] then for _,l in pairs(BoxLines[p]) do if l then l.Visible=false end end end if HBarLines[p] then if HBarLines[p].bg then HBarLines[p].bg.Visible=false end if HBarLines[p].fill then HBarLines[p].fill.Visible=false end end if NameLbls[p] then NameLbls[p].Visible=false end if DistLbls[p] then DistLbls[p].Visible=false end
             if ChamsInst[p] then pcall(function()ChamsInst[p]:Destroy()end) ChamsInst[p]=nil end
