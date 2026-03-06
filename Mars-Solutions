@@ -1,5 +1,5 @@
 ╔══════════════════════════════════════════════════════╗
-    ║           MARS SOLUTIONS  —  v5  ●  stable           ║
+    ║           MARS SOLUTIONS  —  v1  ●  stable           ║
     ║         authored by Mars  |  [Insert] toggle         ║
     ╚══════════════════════════════════════════════════════╝
     Architecture:
@@ -327,7 +327,7 @@ local function unhookSilentAim()
     SAHooked = false
 end
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name          = "MarsSolutions_v5"
+ScreenGui.Name          = "MarsV1"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ResetOnSpawn  = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -638,7 +638,7 @@ local function IDLabel(text, font, size, color, x)
 end
 IDLabel("MARS",      Enum.Font.GothamBold, 13, Theme.TextPrimary, 12)
 IDLabel("Solutions", Enum.Font.Gotham,     11, Theme.TextSecond,  54)
-IDLabel("v5",        Enum.Font.GothamBold, 11, Theme.Accent,      118)
+IDLabel("v1",        Enum.Font.GothamBold, 11, Theme.Accent,      118)
 local StableBadge = Instance.new("Frame", IdentityRow)
 StableBadge.Size             = UDim2.fromOffset(46, 16)
 StableBadge.Position         = UDim2.new(0, 148, 0.5, 0)
@@ -862,7 +862,7 @@ end
 local FooterLeft   = FooterLabel("● 0 players online", 0, 0, 10)
 FooterLeft.TextColor3 = Theme.Online
 local FooterCenter = FooterLabel("mars / discord", 0.5, 0.5, 0)
-local FooterRight  = FooterLabel("built: v5  stable", 1, 1, -10)
+local FooterRight  = FooterLabel("built: v1  stable", 1, 1, -10)
 local function TwoCol(parent)
     local row = Instance.new("Frame", parent)
     row.Size             = UDim2.new(1, -20, 0, 0)
@@ -1064,17 +1064,24 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     btn.Position         = UDim2.fromOffset(0, 18)
     btn.BackgroundColor3 = Theme.Input; btn.BorderSizePixel = 0
     btn.Font             = Enum.Font.Gotham; btn.TextSize = 12
-    btn.TextColor3       = Theme.TextPrimary; btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.TextColor3       = Color3.new(0,0,0); btn.Text = ""
+    btn.TextXAlignment   = Enum.TextXAlignment.Left
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
-    local btnPad = Instance.new("UIPadding", btn)
-    btnPad.PaddingLeft = UDim.new(0, 10)
+    local selLbl = Instance.new("TextLabel", btn)
+    selLbl.Size               = UDim2.new(1, -28, 1, 0)
+    selLbl.Position           = UDim2.fromOffset(10, 0)
+    selLbl.BackgroundTransparency = 1
+    selLbl.Font               = Enum.Font.Gotham; selLbl.TextSize = 12
+    selLbl.TextColor3         = Theme.TextPrimary
+    selLbl.TextXAlignment     = Enum.TextXAlignment.Left
+    selLbl.TextTruncate       = Enum.TextTruncate.AtEnd
     local chevron = Instance.new("TextLabel", btn)
     chevron.Size               = UDim2.fromOffset(20, 26)
     chevron.Position           = UDim2.new(1, -24, 0, 0)
     chevron.BackgroundTransparency = 1; chevron.Font = Enum.Font.GothamBold
     chevron.TextSize           = 11; chevron.TextColor3 = Theme.TextDim; chevron.Text = "▾"
     local idx = defaultIndex
-    btn.Text = options[idx]
+    selLbl.Text = options[idx]
     callback(idx)
     local itemCount = #options
     local listH = itemCount * 30 + 8
@@ -1114,7 +1121,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
         connect(item.MouseEnter, function() tween(item, {BackgroundColor3 = Theme.ButtonHover}, 0.1) end)
         connect(item.MouseLeave, function() tween(item, {BackgroundColor3 = Theme.Button},      0.1) end)
         connect(item.MouseButton1Click, function()
-            idx = i; btn.Text = opt; callback(i)
+            idx = i; selLbl.Text = opt; callback(i)
             for _, child in ipairs(dropList:GetChildren()) do
                 if child:IsA("TextButton") then
                     child.TextColor3 = child.Text == opt and Theme.TextAccent or Theme.TextSecond
@@ -1161,7 +1168,7 @@ local function Dropdown(parent, text, options, defaultIndex, callback, order)
     ctrl.setValue = function(newIdx)
         if options[newIdx] then
             idx = newIdx
-            btn.Text = options[newIdx]
+            selLbl.Text = options[newIdx]
             for _, child in ipairs(dropList:GetChildren()) do
                 if child:IsA("TextButton") then
                     child.TextColor3 = child.Text == options[newIdx] and Theme.TextAccent or Theme.TextSecond
@@ -1409,14 +1416,15 @@ do
     local page = TabPages["Movement"]
     local scroll = Instance.new("ScrollingFrame", page)
     scroll.Size             = UDim2.new(1, 0, 1, 0)
+    scroll.Position         = UDim2.fromOffset(0, 0)
     scroll.BackgroundTransparency = 1
     hideScrollBar(scroll); scroll.BorderSizePixel = 0
     scroll.CanvasSize       = UDim2.new(0,0,0,0)
     local layout = Instance.new("UIListLayout", scroll)
     layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
     local pad = Instance.new("UIPadding", scroll)
-    pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight  = UDim.new(0,8)
-    pad.PaddingTop  = UDim.new(0,6); pad.PaddingBottom = UDim.new(0,6)
+    pad.PaddingLeft  = UDim.new(0, 8); pad.PaddingRight  = UDim.new(0, 8)
+    pad.PaddingTop   = UDim.new(0, 6); pad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
@@ -1835,7 +1843,7 @@ do
     local cExp    = InfoLine("Experience: loading...", 104, false, Theme.TextSecond)
     local cPlace  = InfoLine("Place ID: " .. tostring(game.PlaceId), 122, false, Theme.TextDim)
     local cServer = InfoLine("Server: loading...", 140, false, Theme.TextDim)
-    local cBuild  = InfoLine("Build: Mars Solutions v5  ●  stable", 158, false, Theme.TextDim)
+    local cBuild  = InfoLine("Build: Mars v1  ●  stable", 158, false, Theme.TextDim)
     task.spawn(function()
         local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, game.PlaceId)
         cExp.Text = "Experience: " .. (ok and info and info.Name or game.Name or "Unknown")
@@ -1945,7 +1953,7 @@ do
         _origLog(msg)
         appendLog(msg)
     end
-    appendLog("Mars Solutions v5 loaded")
+    appendLog("Mars v1 loaded")
     appendLog("Place: " .. tostring(game.PlaceId))
     Section(scroll, "HOOK STATUS", 6)
     local hookCard = Instance.new("Frame", scroll)
@@ -2039,7 +2047,7 @@ connect(UIS.InputBegan, function(i, gp)
     if gp then return end
     if i.KeyCode == Enum.KeyCode.Insert then
         Main.Visible = not Main.Visible
-        Notify("Mars Solutions", Main.Visible and "Menu opened" or "Menu hidden  –  [Insert] to reopen")
+        Notify("Mars v1", Main.Visible and "Menu opened" or "Menu hidden  –  [Insert] to reopen")
     end
     if i.UserInputType == Enum.UserInputType.MouseButton2 then
         ADS = true; FOVCircle.Visible = true; FOVDot.Visible = true
@@ -2253,7 +2261,10 @@ connect(RunService.Heartbeat, function()
             end
         end
     end
-    local ec = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
+end)
+connect(RunService.RenderStepped, function()
+    if Unloaded then return end
+local ec = RainbowEnabled and Color3.fromHSV(rainbowHue, 1, 1) or Theme.Accent
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p) then
             local char = p.Character
@@ -2406,6 +2417,7 @@ connect(RunService.Heartbeat, function()
         end
         for i = dotIdx + 1, #RadarDots do RadarDots[i].Visible = false end
     end
+
 end)
 task.defer(function()
     local combatBtn = TabButtons["Combat"]
@@ -2419,5 +2431,5 @@ task.defer(function()
 end)
 
 task.delay(0.6, function()
-    Notify("Mars Solutions", "v5 loaded  –  [Insert] to toggle", 4)
+    Notify("Mars v1", "v1 loaded  –  [Insert] to toggle", 4)
 end)
