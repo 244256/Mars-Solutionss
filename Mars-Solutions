@@ -197,12 +197,16 @@ local function getAimPoint(part)
 end
 local function getCharacterBounds2D(char)
     local cf, size = char:GetBoundingBox()
-    local h = size * 0.5
+    local hx, hy, hz = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
     local corners = {
-        cf * Vector3.new(-h.X,-h.Y,-h.Z), cf * Vector3.new(-h.X,-h.Y, h.Z),
-        cf * Vector3.new(-h.X, h.Y,-h.Z), cf * Vector3.new(-h.X, h.Y, h.Z),
-        cf * Vector3.new( h.X,-h.Y,-h.Z), cf * Vector3.new( h.X,-h.Y, h.Z),
-        cf * Vector3.new( h.X, h.Y,-h.Z), cf * Vector3.new( h.X, h.Y, h.Z),
+        cf:PointToWorldSpace(Vector3.new(-hx, -hy, -hz)),
+        cf:PointToWorldSpace(Vector3.new(-hx, -hy,  hz)),
+        cf:PointToWorldSpace(Vector3.new(-hx,  hy, -hz)),
+        cf:PointToWorldSpace(Vector3.new(-hx,  hy,  hz)),
+        cf:PointToWorldSpace(Vector3.new( hx, -hy, -hz)),
+        cf:PointToWorldSpace(Vector3.new( hx, -hy,  hz)),
+        cf:PointToWorldSpace(Vector3.new( hx,  hy, -hz)),
+        cf:PointToWorldSpace(Vector3.new( hx,  hy,  hz)),
     }
     local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
     local anyVis = false
@@ -658,8 +662,8 @@ StableLabel.BackgroundTransparency = 1; StableLabel.Font = Enum.Font.GothamBold
 StableLabel.TextSize = 9; StableLabel.TextColor3 = Theme.Online; StableLabel.Text = "stable"
 local ConfigBadge = Instance.new("Frame", IdentityRow)
 ConfigBadge.Size        = UDim2.fromOffset(58, 16)
-ConfigBadge.Position    = UDim2.new(1, -104, 0.5, 0)
-ConfigBadge.AnchorPoint = Vector2.new(1, 0.5)
+ConfigBadge.Position    = UDim2.new(0, 200, 0.5, 0)
+ConfigBadge.AnchorPoint = Vector2.new(0, 0.5)
 ConfigBadge.BackgroundColor3 = Color3.fromRGB(28, 24, 28)
 ConfigBadge.BorderSizePixel  = 0
 Instance.new("UICorner", ConfigBadge).CornerRadius = UDim.new(1, 0)
@@ -791,6 +795,7 @@ PageContainer.Size             = UDim2.new(1, 0, 1, -(PAGE_Y + 24))
 PageContainer.Position         = UDim2.fromOffset(0, PAGE_Y)
 PageContainer.BackgroundTransparency = 1
 PageContainer.ClipsDescendants = true
+PageContainer.Visible          = true
 local TabButtons = {}
 local TabPages   = {}
 local activeTab  = nil
@@ -1426,6 +1431,9 @@ do
     pad.PaddingLeft  = UDim.new(0, 8); pad.PaddingRight  = UDim.new(0, 8)
     pad.PaddingTop   = UDim.new(0, 6); pad.PaddingBottom = UDim.new(0, 6)
     connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function()
+        scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
+    end)
+    task.defer(function()
         scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 12)
     end)
     Section(scroll, "CHARACTER", 1)
