@@ -19,6 +19,7 @@ local T={
 
 -- State
 local ADS,AimbotEnabled,AimbotAlwaysOn,AimFOV,AimStrength,AimMaxDist,Pred,VisChk,TeamChk=false,false,false,120,7,500,0,false,true
+local ShowAimFOV,ShowSilentFOV=true,true
 local AimParts={"Head","UpperTorso","HumanoidRootPart"} local AimMethods={"Camera Lerp","Mouse"} local AimPI,AimMI=1,1
 local SAEnabled,SAFOV,SAVis,SATeam=false,120,false,true
 local TBEnabled,TBDelay,TBThresh,TBVis,TBTeam,lastTB=false,0.05,12,false,true,0
@@ -116,6 +117,16 @@ local function getTarget()
             if vis then local d=(Vector2.new(pos.X,pos.Y)-ctr).Magnitude if d<bDst then bDst=d best=pt bPlr=p end end
         end
     end return best,bPlr
+end
+
+local function applyAim(toPos,dt)
+    local tgt=CFrame.new(Cam.CFrame.Position,toPos)
+    local base=math.clamp((AimStrength/10)*math.clamp(dt*60,.6,1.8),.04,1)
+    if AimMethods[AimMI]=="Mouse" then
+        Cam.CFrame=Cam.CFrame:Lerp(tgt,math.clamp(base*.7,.03,.55))
+    else
+        Cam.CFrame=Cam.CFrame:Lerp(tgt,math.clamp(base,.06,.9))
+    end
 end
 
 local function getCrosshairTgt()
@@ -342,10 +353,7 @@ end
 
 local function Sec(parent,text,ord)
     local f=newInst("Frame",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,LayoutOrder=ord or 0},parent)
-    -- Full-width separator line sits at vertical center
-    newInst("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.Sep,ZIndex=1},f)
-    -- Label has a solid background so it masks the line behind it
-    local bg=newInst("Frame",{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundColor3=T.BG,ZIndex=2},f)
+    local bg=newInst("Frame",{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,0,.5,0),AnchorPoint=Vector2.new(0,.5),BackgroundTransparency=1,ZIndex=2},f)
     pad(bg,0,6,0,0)
     lbl(bg,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,1,0),Font=Enum.Font.GothamBold,TextSize=10,TextColor3=T.TA,Text=text,ZIndex=3})
 end
@@ -452,20 +460,22 @@ do local sc=buildTab("Combat")
     SRefs.AimStrength=Sld(sc,"Smoothing",1,10,7,1,function(v)AimStrength=11-v end,8)
     SRefs.AimMaxDistance=Sld(sc,"Max Distance",50,2000,AimMaxDist,50,function(v)AimMaxDist=v end,9)
     SRefs.Prediction=Sld(sc,"Prediction",0,30,0,1,function(v)Pred=v/100 end,10)
-    local d1=DD(sc,"Hit Part",AimParts,1,function(i)AimPI=i end,11)
-    local d2=DD(sc,"Aim Method",AimMethods,1,function(i)AimMI=i end,12)
+    SRefs.ShowAimFOV=Chk(sc,"Show Aimbot FOV",true,function(v)ShowAimFOV=v end,11)
+    local d1=DD(sc,"Hit Part",AimParts,1,function(i)AimPI=i end,12)
+    local d2=DD(sc,"Aim Method",AimMethods,1,function(i)AimMI=i end,13)
     DRefs.HitPart=d1 DRefs.AimMethod=d2
     Sec(sc,"SILENT AIM",13)
     SRefs.SilentAimEnabled=Chk(sc,"Enabled",false,function(v)SAEnabled=v if v then hookSA()else unhookSA()end logS("SA "..(v and"ON"or"OFF")) Notify("Silent Aim",v and"Enabled"or"Disabled")end,14)
     SRefs.SilentTeamCheck=Chk(sc,"Team Check",true,function(v)SATeam=v end,15)
     SRefs.SilentVisCheck=Chk(sc,"Visible Check",false,function(v)SAVis=v end,16)
     SRefs.SilentAimFOV=Sld(sc,"Silent FOV",40,300,SAFOV,1,function(v)SAFOV=v end,17)
-    Sec(sc,"TRIGGERBOT",18)
-    SRefs.TriggerbotEnabled=Chk(sc,"Enabled",false,function(v)TBEnabled=v logS("TB "..(v and"ON"or"OFF")) Notify("Triggerbot",v and"Enabled"or"Disabled")end,19)
-    SRefs.TriggerbotTeamCheck=Chk(sc,"Team Check",true,function(v)TBTeam=v end,20)
-    SRefs.TriggerbotVisCheck=Chk(sc,"Visible Check",false,function(v)TBVis=v end,21)
-    SRefs.TriggerbotDelay=Sld(sc,"Delay (ms)",0,500,50,1,function(v)TBDelay=v/1000 end,22)
-    SRefs.TriggerbotThreshold=Sld(sc,"Threshold (px)",2,60,12,1,function(v)TBThresh=v end,23)
+    SRefs.ShowSilentFOV=Chk(sc,"Show Silent FOV",true,function(v)ShowSilentFOV=v end,18)
+    Sec(sc,"TRIGGERBOT",19)
+    SRefs.TriggerbotEnabled=Chk(sc,"Enabled",false,function(v)TBEnabled=v logS("TB "..(v and"ON"or"OFF")) Notify("Triggerbot",v and"Enabled"or"Disabled")end,20)
+    SRefs.TriggerbotTeamCheck=Chk(sc,"Team Check",true,function(v)TBTeam=v end,21)
+    SRefs.TriggerbotVisCheck=Chk(sc,"Visible Check",false,function(v)TBVis=v end,22)
+    SRefs.TriggerbotDelay=Sld(sc,"Delay (ms)",0,500,50,1,function(v)TBDelay=v/1000 end,23)
+    SRefs.TriggerbotThreshold=Sld(sc,"Threshold (px)",2,60,12,1,function(v)TBThresh=v end,24)
 end
 
 -- VISUALS
@@ -528,22 +538,22 @@ do local sc=buildTab("Config")
     pcall(function() if typeof(makefolder)=="function" then if typeof(isfolder)=="function" then if not isfolder(cfgFolder) then makefolder(cfgFolder) end else pcall(makefolder,cfgFolder) end end end)
 
     local function cap()
-        return{AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,AimFOV=AimFOV,AimStrength=AimStrength,AimMaxDistance=AimMaxDist,Prediction=Pred*100,VisibleCheck=VisChk,TeamCheck=TeamChk,AimPartIndex=AimPI,AimMethodIndex=AimMI,SilentAimEnabled=SAEnabled,SilentAimFOV=SAFOV,SilentVisCheck=SAVis,SilentTeamCheck=SATeam,TriggerbotEnabled=TBEnabled,TriggerbotDelay=TBDelay*1000,TriggerbotThreshold=TBThresh,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,RadarRange=RadarRange,WalkSpeed=WS,JumpPower=JP,CameraFOV=CFOV,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK}
+        return{AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,AimFOV=AimFOV,AimStrength=AimStrength,AimMaxDistance=AimMaxDist,Prediction=Pred*100,VisibleCheck=VisChk,TeamCheck=TeamChk,ShowAimFOV=ShowAimFOV,AimPartIndex=AimPI,AimMethodIndex=AimMI,SilentAimEnabled=SAEnabled,SilentAimFOV=SAFOV,ShowSilentFOV=ShowSilentFOV,SilentVisCheck=SAVis,SilentTeamCheck=SATeam,TriggerbotEnabled=TBEnabled,TriggerbotDelay=TBDelay*1000,TriggerbotThreshold=TBThresh,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,RadarRange=RadarRange,WalkSpeed=WS,JumpPower=JP,CameraFOV=CFOV,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK}
     end
 
     local function applyS(s)
         AimbotEnabled=s.AimbotEnabled or false AimbotAlwaysOn=s.AimbotAlwaysOn or false
         AimFOV=s.AimFOV or 120 AimStrength=s.AimStrength or 7 AimMaxDist=s.AimMaxDistance or 500 Pred=(s.Prediction or 0)/100
-        VisChk=s.VisibleCheck or false TeamChk=s.TeamCheck~=nil and s.TeamCheck or true
+        VisChk=s.VisibleCheck or false TeamChk=s.TeamCheck~=nil and s.TeamCheck or true ShowAimFOV=s.ShowAimFOV~=nil and s.ShowAimFOV or true
         AimPI=s.AimPartIndex or 1 AimMI=s.AimMethodIndex or 1
-        SAEnabled=s.SilentAimEnabled or false SAFOV=s.SilentAimFOV or 120 SAVis=s.SilentVisCheck or false SATeam=s.SilentTeamCheck~=nil and s.SilentTeamCheck or true
+        SAEnabled=s.SilentAimEnabled or false SAFOV=s.SilentAimFOV or 120 ShowSilentFOV=s.ShowSilentFOV~=nil and s.ShowSilentFOV or true SAVis=s.SilentVisCheck or false SATeam=s.SilentTeamCheck~=nil and s.SilentTeamCheck or true
         TBEnabled=s.TriggerbotEnabled or false TBDelay=(s.TriggerbotDelay or 50)/1000 TBThresh=s.TriggerbotThreshold or 12 TBTeam=s.TriggerbotTeamCheck~=nil and s.TriggerbotTeamCheck or true TBVis=s.TriggerbotVisCheck or false
         BoneESP=s.BoneESP or false BoxESP=s.BoxESP or false NameESP=s.NameESP or false DistESP=s.DistESP or false TracerESP=s.TracerESP or false HBarESP=s.HBarESP or false
         ChamsOn=s.ChamsOn or false RainbowOn=s.RainbowOn or false RadarOn=s.RadarOn or false RadarRange=s.RadarRange or 100
         WS=s.WalkSpeed or 16 JP=s.JumpPower or 50 CFOV=s.CameraFOV or 70 CFMove=s.CFMove or false InfJump=s.InfJump or false AntiAFK=s.AntiAFK or false
         if SAEnabled then hookSA()else unhookSA()end if not ChamsOn then clearChams()end RF.Visible=RadarOn
         -- Sync UI
-        local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,TgtInfo=TgtInfo}
+        local ck={AimbotEnabled=AimbotEnabled,AimbotAlwaysOn=AimbotAlwaysOn,TeamCheck=TeamChk,VisibleCheck=VisChk,ShowAimFOV=ShowAimFOV,SilentAimEnabled=SAEnabled,SilentTeamCheck=SATeam,SilentVisCheck=SAVis,ShowSilentFOV=ShowSilentFOV,TriggerbotEnabled=TBEnabled,TriggerbotTeamCheck=TBTeam,TriggerbotVisCheck=TBVis,BoneESP=BoneESP,BoxESP=BoxESP,NameESP=NameESP,DistESP=DistESP,TracerESP=TracerESP,HBarESP=HBarESP,ChamsOn=ChamsOn,RainbowOn=RainbowOn,RadarOn=RadarOn,CFMove=CFMove,InfJump=InfJump,AntiAFK=AntiAFK,TgtInfo=TgtInfo}
         for k,v in pairs(ck) do if SRefs[k] then pcall(function()SRefs[k](v)end) end end
         local sl={{k="AimFOV",v=AimFOV},{k="AimStrength",v=11-AimStrength},{k="AimMaxDistance",v=AimMaxDist},{k="Prediction",v=Pred*100},{k="SilentAimFOV",v=SAFOV},{k="TriggerbotDelay",v=TBDelay*1000},{k="TriggerbotThreshold",v=TBThresh},{k="WalkSpeed",v=WS},{k="JumpPower",v=JP},{k="CameraFOV",v=CFOV},{k="RadarRange",v=RadarRange},{k="CFSpeed",v=CFSpeed},{k="CFJump",v=CFJump}}
         for _,e in ipairs(sl) do if SRefs[e.k] then pcall(function()SRefs[e.k](e.v)end) end end
@@ -684,9 +694,9 @@ conn(Plrs.PlayerRemoving,function(p) if CharConns[p] then pcall(function()CharCo
 conn(UIS.InputBegan,function(i,gp)
     if gp then return end
     if i.KeyCode==Enum.KeyCode.Insert then Main.Visible=not Main.Visible Notify("Mars Solutions",Main.Visible and"Menu opened"or"Menu hidden — [Insert] to reopen") end
-    if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=true FC.Visible=true FDot.Visible=true end
+    if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=true end
 end)
-conn(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=false FC.Visible=false FDot.Visible=false end end)
+conn(UIS.InputEnded,function(i) if i.UserInputType==Enum.UserInputType.MouseButton2 then ADS=false end end)
 
 -- Window controls
 local minimized=false local fullSize=UDim2.fromOffset(WW,WH)
@@ -713,13 +723,15 @@ conn(RS.RenderStepped,function(dt)
     local ec=espCol()
     FCS.Color=ec SAFCS.Color=RainbowOn and ec or rgb(100,200,255)
     local ctr=Cam.ViewportSize/2
+    FC.Visible=ShowAimFOV and (AimbotEnabled and (ADS or AimbotAlwaysOn))
+    FDot.Visible=FC.Visible
     FC.Size=UDim2.fromOffset(AimFOV*2,AimFOV*2) FC.Position=UDim2.fromOffset(ctr.X,ctr.Y) FDot.Position=UDim2.fromOffset(ctr.X,ctr.Y)
-    SAFC.Visible=SAEnabled SAFC.Size=UDim2.fromOffset(SAFOV*2,SAFOV*2) SAFC.Position=UDim2.fromOffset(ctr.X,ctr.Y)
+    SAFC.Visible=ShowSilentFOV and SAEnabled
+    SAFC.Size=UDim2.fromOffset(SAFOV*2,SAFOV*2) SAFC.Position=UDim2.fromOffset(ctr.X,ctr.Y)
     -- Silent Aim is purely server-side via __namecall hook — no camera movement here
     local aim,aimPl=getTarget()
     if AimbotEnabled and (ADS or AimbotAlwaysOn) and aim then
-        local tf=CFrame.new(Cam.CFrame.Position,aimPt(aim))
-        if AimMethods[AimMI]=="Mouse" then Cam.CFrame=tf else Cam.CFrame=Cam.CFrame:Lerp(tf,math.clamp(AimStrength/10,.08,1)) end
+        applyAim(aimPt(aim),dt)
         if not fovPulse then fovPulse=true tw(FCS,{Transparency=.15},.06) task.delay(.14,function() if not Unloaded then tw(FCS,{Transparency=.4},.1) task.delay(.12,function()fovPulse=false end) end end) end
     else fovPulse=false end
     if TBEnabled then local tt=getCrosshairTgt() if tt then local now=tick() if now-lastTB>=TBDelay then lastTB=now if typeof(mouse1click)=="function" then pcall(mouse1click) elseif typeof(mouse1press)=="function" then pcall(mouse1press) task.delay(math.max(.04,TBDelay*.5),function()if not Unloaded then pcall(function()if typeof(mouse1release)=="function" then mouse1release()end end)end end) end end end end
@@ -773,7 +785,17 @@ conn(RS.Stepped,function()
             -- Bones
             if BoneESP and hm then
                 local rig=hm.RigType==Enum.HumanoidRigType.R15 and BR15 or BR6 BoneLines[p]=BoneLines[p] or {}
-                for i,pr2 in ipairs(rig) do local a=ch:FindFirstChild(pr2[1]) local b=ch:FindFirstChild(pr2[2]) if a and b then local ap,av=Cam:WorldToViewportPoint(a.Position) local bp,bv=Cam:WorldToViewportPoint(b.Position) local ln=BoneLines[p][i] or newLine(2) BoneLines[p][i]=ln if ln then ln.Color=ec ln.Visible=av and bv if ln.Visible then ln.From=Vector2.new(ap.X,ap.Y) ln.To=Vector2.new(bp.X,bp.Y) end end end end
+                for i,pr2 in ipairs(rig) do
+                    local ln=BoneLines[p][i] or newLine(2) BoneLines[p][i]=ln
+                    local a=ch:FindFirstChild(pr2[1]) local b=ch:FindFirstChild(pr2[2])
+                    if ln and a and b then
+                        local ap,av=Cam:WorldToViewportPoint(a.Position) local bp,bv=Cam:WorldToViewportPoint(b.Position)
+                        ln.Color=ec ln.Visible=av and bv
+                        if ln.Visible then ln.From=Vector2.new(ap.X,ap.Y) ln.To=Vector2.new(bp.X,bp.Y) end
+                    elseif ln then
+                        ln.Visible=false
+                    end
+                end
             elseif BoneLines[p] then for _,l in pairs(BoneLines[p]) do if l then l.Visible=false end end end
             -- Tracers
             if TracerESP and root then local pos,vis=Cam:WorldToViewportPoint(root.Position) TracerLines[p]=TracerLines[p] or newLine(1.4) local tr3=TracerLines[p] if tr3 then tr3.Color=ec tr3.Visible=vis if vis then tr3.From=Vector2.new(ctr.X,Cam.ViewportSize.Y) tr3.To=Vector2.new(pos.X,pos.Y) end end elseif TracerLines[p] then TracerLines[p].Visible=false end
