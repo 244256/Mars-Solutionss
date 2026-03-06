@@ -122,12 +122,12 @@ end
 
 local function applyAim(toPos,dt)
     local tgt=CFrame.new(Cam.CFrame.Position,toPos)
+    local base=math.clamp((AimStrength/10)*math.clamp(dt*60,.6,1.8),.04,1)
     if AimMethods[AimMI]=="Mouse" then
-        Cam.CFrame=tgt
-        return
+        Cam.CFrame=Cam.CFrame:Lerp(tgt,math.clamp(base*.7,.03,.55))
+    else
+        Cam.CFrame=Cam.CFrame:Lerp(tgt,math.clamp(base,.06,.9))
     end
-    local alpha=math.clamp((AimStrength/10)*math.clamp(dt*60,.7,1.5),.08,.95)
-    Cam.CFrame=Cam.CFrame:Lerp(tgt,alpha)
 end
 
 local function getCrosshairTgt()
