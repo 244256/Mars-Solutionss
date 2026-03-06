@@ -78,7 +78,6 @@ local AimbotEnabled   = false
 local AimFOV          = 120
 local AimStrength     = 7
 local AimMaxDistance  = 500
-local FOVCircleVisible = true
 local Prediction      = 0
 local VisibleCheck    = false
 local TeamCheck       = true
@@ -831,57 +830,49 @@ IDLabel("MARS",      Enum.Font.GothamBold, 13, Theme.TextPrimary, 12)
 IDLabel("Solutions", Enum.Font.Gotham,     11, Theme.TextSecond,  54)
 IDLabel("v5",        Enum.Font.GothamBold, 11, Theme.Accent,      118)
 
--- Stable badge — taller pill, brighter green
+-- Stable badge
 local StableBadge = Instance.new("Frame", IdentityRow)
-StableBadge.Size             = UDim2.fromOffset(52, 18)
-StableBadge.Position         = UDim2.new(0, 136, 0.5, 0)
+StableBadge.Size             = UDim2.fromOffset(46, 16)
+StableBadge.Position         = UDim2.new(0, 138, 0.5, 0)
 StableBadge.AnchorPoint      = Vector2.new(0, 0.5)
-StableBadge.BackgroundColor3 = Color3.fromRGB(15, 36, 20)
+StableBadge.BackgroundColor3 = Color3.fromRGB(20, 40, 26)
 StableBadge.BorderSizePixel  = 0
 Instance.new("UICorner", StableBadge).CornerRadius = UDim.new(1, 0)
 local StableStroke = Instance.new("UIStroke", StableBadge)
-StableStroke.Color = Color3.fromRGB(50, 180, 80); StableStroke.Thickness = 1; StableStroke.Transparency = 0.2
+StableStroke.Color = Color3.fromRGB(40, 130, 70); StableStroke.Thickness = 1; StableStroke.Transparency = 0.3
 local StableDot = Instance.new("Frame", StableBadge)
-StableDot.Size = UDim2.fromOffset(6, 6); StableDot.Position = UDim2.new(0, 6, 0.5, 0)
-StableDot.AnchorPoint = Vector2.new(0, 0.5)
-StableDot.BackgroundColor3 = Color3.fromRGB(70, 230, 110)
+StableDot.Size = UDim2.fromOffset(5, 5); StableDot.Position = UDim2.new(0, 6, 0.5, 0)
+StableDot.AnchorPoint = Vector2.new(0, 0.5); StableDot.BackgroundColor3 = Theme.Online
 StableDot.BorderSizePixel = 0; Instance.new("UICorner", StableDot).CornerRadius = UDim.new(1, 0)
 local StableLabel = Instance.new("TextLabel", StableBadge)
-StableLabel.Size = UDim2.new(1, -16, 1, 0); StableLabel.Position = UDim2.fromOffset(15, 0)
+StableLabel.Size = UDim2.new(1, -14, 1, 0); StableLabel.Position = UDim2.fromOffset(14, 0)
 StableLabel.BackgroundTransparency = 1; StableLabel.Font = Enum.Font.GothamBold
-StableLabel.TextSize = 10; StableLabel.TextColor3 = Color3.fromRGB(80, 225, 115)
-StableLabel.Text = "stable"; StableLabel.TextXAlignment = Enum.TextXAlignment.Left
+StableLabel.TextSize = 9; StableLabel.TextColor3 = Theme.Online; StableLabel.Text = "stable"
 
--- Config mode badge — taller, colored dot inside, right-anchored
+-- Config mode badge — anchored to the RIGHT side of identity row, left of win buttons
 local ConfigBadge = Instance.new("Frame", IdentityRow)
-ConfigBadge.Size        = UDim2.fromOffset(62, 18)
-ConfigBadge.Position    = UDim2.new(1, -106, 0.5, 0)
+ConfigBadge.Size        = UDim2.fromOffset(58, 16)
+ConfigBadge.Position    = UDim2.new(1, -100, 0.5, 0)
 ConfigBadge.AnchorPoint = Vector2.new(0, 0.5)
-ConfigBadge.BackgroundColor3 = Color3.fromRGB(26, 22, 30)
+ConfigBadge.BackgroundColor3 = Color3.fromRGB(28, 24, 28)
 ConfigBadge.BorderSizePixel  = 0
 Instance.new("UICorner", ConfigBadge).CornerRadius = UDim.new(1, 0)
 local ConfigBadgeStroke = Instance.new("UIStroke", ConfigBadge)
-ConfigBadgeStroke.Color = Theme.TextDim; ConfigBadgeStroke.Thickness = 1; ConfigBadgeStroke.Transparency = 0.4
-local ConfigDot = Instance.new("Frame", ConfigBadge)
-ConfigDot.Size = UDim2.fromOffset(6, 6); ConfigDot.Position = UDim2.new(0, 6, 0.5, 0)
-ConfigDot.AnchorPoint = Vector2.new(0, 0.5); ConfigDot.BackgroundColor3 = Theme.TextDim
-ConfigDot.BorderSizePixel = 0; Instance.new("UICorner", ConfigDot).CornerRadius = UDim.new(1, 0)
+ConfigBadgeStroke.Color = Theme.TextDim; ConfigBadgeStroke.Thickness = 1; ConfigBadgeStroke.Transparency = 0.5
 local ConfigBadgeLabel = Instance.new("TextLabel", ConfigBadge)
-ConfigBadgeLabel.Size = UDim2.new(1, -16, 1, 0); ConfigBadgeLabel.Position = UDim2.fromOffset(15, 0)
+ConfigBadgeLabel.Size = UDim2.new(1, 0, 1, 0)
 ConfigBadgeLabel.BackgroundTransparency = 1; ConfigBadgeLabel.Font = Enum.Font.GothamBold
-ConfigBadgeLabel.TextSize = 10; ConfigBadgeLabel.TextColor3 = Theme.TextDim
-ConfigBadgeLabel.Text = "custom"; ConfigBadgeLabel.TextXAlignment = Enum.TextXAlignment.Left
+ConfigBadgeLabel.TextSize = 9; ConfigBadgeLabel.TextColor3 = Theme.TextDim
+ConfigBadgeLabel.Text = "custom"
 
 local function setConfigBadge(name, color)
-    local c = color or Theme.TextDim
-    ConfigBadgeLabel.Text        = name:lower()
-    ConfigBadgeLabel.TextColor3  = c
-    ConfigBadgeStroke.Color      = c
-    ConfigDot.BackgroundColor3   = c
+    ConfigBadgeLabel.Text       = name:lower()
+    ConfigBadgeLabel.TextColor3 = color or Theme.TextDim
+    ConfigBadgeStroke.Color     = color or Theme.TextDim
     ConfigBadge.BackgroundColor3 = Color3.fromRGB(
-        math.floor(c.R * 255 * 0.14),
-        math.floor(c.G * 255 * 0.14),
-        math.floor(c.B * 255 * 0.14)
+        math.floor((color or Theme.TextDim).R * 255 * 0.14),
+        math.floor((color or Theme.TextDim).G * 255 * 0.14),
+        math.floor((color or Theme.TextDim).B * 255 * 0.14)
     )
     ActiveConfig = name
 end
@@ -1609,22 +1600,17 @@ do
     local A = subPages["Aimbot"]
 
     Section(A, "AIMBOT", 1)
-    Checkbox(A, "Enabled",       false, function(v) AimbotEnabled = v; Notify("Aimbot", v and "Enabled" or "Disabled") end, 2)
+    Checkbox(A, "Enabled",       false, function(v) AimbotEnabled = v;  Notify("Aimbot", v and "Enabled" or "Disabled") end, 2)
     Checkbox(A, "Team Check",    true,  function(v) TeamCheck = v end, 3)
     Checkbox(A, "Visible Check", false, function(v) VisibleCheck = v end, 4)
-    Dropdown(A, "Hit Part",      AimPartOptions,   1, function(i) AimPartIndex = i end, 5)
-    Dropdown(A, "Aim Method",    AimMethodOptions, 1, function(i) AimMethodIndex = i end, 6)
 
-    Section(A, "ACCURACY", 7)
-    Slider(A, "FOV",          40, 300, AimFOV,          1,  function(v) AimFOV = v end, 8)
-    Slider(A, "Smoothing",     1,  10, AimStrength,     1,  function(v) AimStrength = 11 - v end, 9)
-    Slider(A, "Max Distance", 50, 2000, AimMaxDistance, 50, function(v) AimMaxDistance = v end, 10)
-    Slider(A, "Prediction",    0,  30, 0,               1,  function(v) Prediction = v / 100 end, 11)
-    Checkbox(A, "Show FOV Circle", true, function(v)
-        FOVCircleVisible = v
-        FOVCircle.Visible = v
-        FOVStroke.Visible = v
-    end, 12)
+    Section(A, "SETTINGS", 5)
+    Slider(A, "FOV",          40, 300, AimFOV,         1,   function(v) AimFOV = v end, 6)
+    Slider(A, "Smoothing",     1,  10, AimStrength,    1,   function(v) AimStrength = 11 - v end, 7)
+    Slider(A, "Max Distance", 50, 2000, AimMaxDistance, 50, function(v) AimMaxDistance = v end, 8)
+    Slider(A, "Prediction",    0,  30, 0,              1,   function(v) Prediction = v / 100 end, 9)
+    Dropdown(A, "Hit Part",   AimPartOptions,   1, function(i) AimPartIndex = i end, 10)
+    Dropdown(A, "Aim Method", AimMethodOptions, 1, function(i) AimMethodIndex = i end, 11)
 
     -- ── Silent Aim sub-page
     local S = subPages["Silent Aim"]
@@ -2137,94 +2123,61 @@ do
 
     -- Client card
     local card = Instance.new("Frame", scroll)
-    card.LayoutOrder = 1; card.Size = UDim2.new(1, 0, 0, 116)
+    card.LayoutOrder = 1; card.Size = UDim2.new(1, 0, 0, 180)
     card.BackgroundColor3 = Theme.Card; card.BorderSizePixel = 0
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 14)
-    local cardStroke = Instance.new("UIStroke", card)
-    cardStroke.Color = Theme.Accent; cardStroke.Thickness = 1; cardStroke.Transparency = 0.7
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 12)
+    local cardStroke = Instance.new("UIStroke", card); cardStroke.Color = Theme.Border; cardStroke.Thickness = 1
 
-    -- Left accent bar
-    local cardBar = Instance.new("Frame", card)
-    cardBar.Size = UDim2.new(0, 3, 1, -20); cardBar.Position = UDim2.fromOffset(8, 10)
-    cardBar.BackgroundColor3 = Theme.Accent; cardBar.BorderSizePixel = 0
-    Instance.new("UICorner", cardBar).CornerRadius = UDim.new(1, 0)
-
-    -- Avatar
     local av = Instance.new("ImageLabel", card)
-    av.Size = UDim2.fromOffset(64, 64); av.Position = UDim2.fromOffset(18, 26)
+    av.Size = UDim2.fromOffset(56, 56); av.Position = UDim2.fromOffset(14, 14)
     av.BackgroundColor3 = Theme.Panel; av.BorderSizePixel = 0
     Instance.new("UICorner", av).CornerRadius = UDim.new(1, 0)
-    local avRing = Instance.new("UIStroke", av)
-    avRing.Color = Theme.Accent; avRing.Thickness = 1.5; avRing.Transparency = 0.5
     task.spawn(function()
         local ok, img = pcall(Players.GetUserThumbnailAsync, Players,
             LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
         if ok and img then av.Image = img end
     end)
 
-    -- Name block (right of avatar)
-    local cDisplay = Instance.new("TextLabel", card)
-    cDisplay.Size = UDim2.new(1, -100, 0, 20); cDisplay.Position = UDim2.fromOffset(90, 26)
-    cDisplay.BackgroundTransparency = 1; cDisplay.Font = Enum.Font.GothamBold
-    cDisplay.TextSize = 14; cDisplay.TextColor3 = Theme.TextPrimary
-    cDisplay.TextXAlignment = Enum.TextXAlignment.Left
-    cDisplay.Text = LocalPlayer.DisplayName or "..."
+    local function InfoLine(text, y, bold, color)
+        local l = Instance.new("TextLabel", card)
+        l.Size = UDim2.new(1, -86, 0, 18); l.Position = UDim2.fromOffset(78, y)
+        l.BackgroundTransparency = 1
+        l.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+        l.TextSize = 12; l.TextColor3 = color or Theme.TextPrimary
+        l.TextXAlignment = Enum.TextXAlignment.Left; l.Text = text
+        return l
+    end
 
-    local cUser = Instance.new("TextLabel", card)
-    cUser.Size = UDim2.new(1, -100, 0, 14); cUser.Position = UDim2.fromOffset(90, 48)
-    cUser.BackgroundTransparency = 1; cUser.Font = Enum.Font.Gotham
-    cUser.TextSize = 11; cUser.TextColor3 = Theme.TextDim
-    cUser.TextXAlignment = Enum.TextXAlignment.Left
-    cUser.Text = "@" .. (LocalPlayer.Name or "...")
+    local cDisplay = InfoLine(LocalPlayer.DisplayName,       14, true,  Theme.TextPrimary)
+    local cUser    = InfoLine("@" .. LocalPlayer.Name,       33, false, Theme.TextSecond)
+    local cId      = InfoLine("ID: " .. LocalPlayer.UserId,  52, false, Theme.TextDim)
 
-    -- Status row
+    -- Status dot
     local dotRow = Instance.new("Frame", card)
-    dotRow.Size = UDim2.new(1, -100, 0, 16); dotRow.Position = UDim2.fromOffset(90, 68)
+    dotRow.Size = UDim2.new(1, -16, 0, 18); dotRow.Position = UDim2.fromOffset(14, 78)
     dotRow.BackgroundTransparency = 1
 
     local statusDot = Instance.new("Frame", dotRow)
-    statusDot.Size = UDim2.fromOffset(7, 7); statusDot.Position = UDim2.new(0, 0, 0.5, 0)
+    statusDot.Size = UDim2.fromOffset(8, 8); statusDot.Position = UDim2.new(0, 0, 0.5, 0)
     statusDot.AnchorPoint = Vector2.new(0, 0.5); statusDot.BackgroundColor3 = Theme.Online
     statusDot.BorderSizePixel = 0; Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
 
     local statusLbl = Instance.new("TextLabel", dotRow)
-    statusLbl.Size = UDim2.new(1, -12, 1, 0); statusLbl.Position = UDim2.fromOffset(12, 0)
+    statusLbl.Size = UDim2.new(1, -14, 1, 0); statusLbl.Position = UDim2.fromOffset(14, 0)
     statusLbl.BackgroundTransparency = 1; statusLbl.Font = Enum.Font.GothamBold
-    statusLbl.TextSize = 10; statusLbl.TextColor3 = Theme.Online
-    statusLbl.TextXAlignment = Enum.TextXAlignment.Left; statusLbl.Text = "connected"
+    statusLbl.TextSize = 11; statusLbl.TextColor3 = Theme.Online
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Left; statusLbl.Text = "Connected"
 
-    -- Thin divider
-    local cardDiv = Instance.new("Frame", card)
-    cardDiv.Size = UDim2.new(1, -20, 0, 1); cardDiv.Position = UDim2.fromOffset(10, 96)
-    cardDiv.BackgroundColor3 = Theme.Separator; cardDiv.BorderSizePixel = 0
-
-    -- Footer row: game name left, server id right
-    card.Size = UDim2.new(1, 0, 0, 114)  -- extend for footer
-
-    local cExp = Instance.new("TextLabel", card)
-    cExp.Size = UDim2.new(0.65, 0, 0, 16); cExp.Position = UDim2.fromOffset(14, 96)
-    cExp.BackgroundTransparency = 1; cExp.Font = Enum.Font.Gotham
-    cExp.TextSize = 10; cExp.TextColor3 = Theme.TextDim
-    cExp.TextXAlignment = Enum.TextXAlignment.Left
-    cExp.TextTruncate = Enum.TextTruncate.AtEnd; cExp.Text = "loading..."
-
-    local cServer = Instance.new("TextLabel", card)
-    cServer.Size = UDim2.new(0.45, 0, 0, 16); cServer.Position = UDim2.new(0.55, -4, 0, 96)
-    cServer.BackgroundTransparency = 1; cServer.Font = Enum.Font.Gotham
-    cServer.TextSize = 10; cServer.TextColor3 = Theme.TextDim
-    cServer.TextXAlignment = Enum.TextXAlignment.Right
-    cServer.TextTruncate = Enum.TextTruncate.AtEnd; cServer.Text = "..."
-
-    -- cId and cPlace kept for captureState compat (invisible)
-    local cId     = Instance.new("TextLabel", card); cId.Visible = false; cId.Text = ""
-    local cPlace  = Instance.new("TextLabel", card); cPlace.Visible = false; cPlace.Text = ""
-    local cBuild  = Instance.new("TextLabel", card); cBuild.Visible = false; cBuild.Text = ""
+    local cExp    = InfoLine("Experience: loading...", 104, false, Theme.TextSecond)
+    local cPlace  = InfoLine("Place ID: " .. tostring(game.PlaceId), 122, false, Theme.TextDim)
+    local cServer = InfoLine("Server: loading...", 140, false, Theme.TextDim)
+    local cBuild  = InfoLine("Build: Mars Solutions v5  ●  stable", 158, false, Theme.TextDim)
 
     task.spawn(function()
         local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, game.PlaceId)
-        cExp.Text = (ok and info and info.Name or game.Name or "Unknown")
+        cExp.Text = "Experience: " .. (ok and info and info.Name or game.Name or "Unknown")
         local jid = tostring(game.JobId or "N/A")
-        cServer.Text = jid:len() > 18 and jid:sub(1,18).."..." or jid
+        cServer.Text = "Server: " .. (jid:len() > 24 and jid:sub(1,24).."..." or jid)
     end)
 
     -- ── Session Stats grid (2x2)
