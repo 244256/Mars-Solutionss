@@ -70,8 +70,6 @@ local JumpPower         = 50
 local CameraFOV         = 70
 local CFrameMoveEnabled = false
 local CFrameWalkSpeed   = 24
-local InfJumpEnabled    = false
-local CFrameJumpSpeed   = 18
 local BoneESPEnabled    = false
 local TracersEnabled    = false
 local BoxESPEnabled     = false
@@ -99,7 +97,6 @@ local Connections          = {}
 local CharacterConnections = {}
 local Unloaded             = false
 local ThumbnailCache       = {}
-local steppedFrame         = 0
 local function connect(signal, fn)
     local c = signal:Connect(fn)
     table.insert(Connections, c)
@@ -147,19 +144,14 @@ local function flushPlayerLines(p)
         HealthBarLines[p] = nil
     end
 end
-local function espColor()
-    if RainbowEnabled then
-        return Color3.fromHSV(rainbowHue, 1, 1)
-    end
-    return Theme.Accent
-end
 local function isAlive(char)
     if not char then return false end
     local h = char:FindFirstChildOfClass("Humanoid")
     return h and h.Health > 0
 end
-local function isEnemy(p)
-    if TeamCheck then
+local function isEnemy(p, useTeamCheck)
+    if useTeamCheck == nil then useTeamCheck = TeamCheck end
+    if useTeamCheck then
         local a, b = LocalPlayer.Team, p.Team
         if a and b then return a ~= b end
     end
@@ -216,10 +208,7 @@ local function getTarget()
     local center = Camera.ViewportSize / 2
     local best, bestPlayer, bestDist = nil, nil, AimFOV
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p) then
-            local part = getAimPart(p.Character)
-            if part and isVisible(part) then
-                local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p, TeamCheck) then
                 if myRoot and (part.Position - myRoot.Position).Magnitude > AimMaxDistance then continue end
                 local pos, vis = Camera:WorldToViewportPoint(getAimPoint(part))
                 if vis then
@@ -1404,18 +1393,12 @@ do
     Slider(scroll, "Walk Speed", 16, 200, 16, 1, function(v) WalkSpeed = v end, 2)
     Slider(scroll, "Jump Power", 25, 300, 50, 1, function(v) JumpPower = v end, 3)
     Slider(scroll, "Camera FOV", 40, 120, 70, 1, function(v) CameraFOV = v end, 4)
-    Section(scroll, "ABILITIES", 5)
-    Checkbox(scroll, "Infinite Jump", false, function(v)
-        InfJumpEnabled = v
-        Notify("Movement", v and "Inf Jump ON" or "Inf Jump OFF")
-    end, 6)
-    Section(scroll, "CFRAME MOVEMENT", 7)
+    Section(scroll, "CFRAME MOVEMENT", 5)
     Checkbox(scroll, "CFrame Move", false, function(v)
         CFrameMoveEnabled = v
         Notify("Movement", v and "CFrame Move ON" or "CFrame Move OFF")
-    end, 8)
-    Slider(scroll, "CF Speed", 8, 120, 24, 1, function(v) CFrameWalkSpeed = v end, 9)
-    Slider(scroll, "CF Jump",  4,  80, 18, 1, function(v) CFrameJumpSpeed = v end, 10)
+    end, 6)
+    Slider(scroll, "CF Speed", 8, 120, 24, 1, function(v) CFrameWalkSpeed = v end, 7)
 end
 do
     local page = TabPages["Players"]
@@ -2189,9 +2172,6 @@ connect(RunService.Heartbeat, function()
         if hum then
             if hum.WalkSpeed ~= WalkSpeed then hum.WalkSpeed = WalkSpeed end
             if hum.JumpPower  ~= JumpPower  then hum.JumpPower  = JumpPower  end
-            if InfJumpEnabled and UIS:IsKeyDown(Enum.KeyCode.Space) then
-                hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
         end
         if Camera.FieldOfView ~= CameraFOV then Camera.FieldOfView = CameraFOV end
         if CFrameMoveEnabled then
@@ -2224,10 +2204,7 @@ connect(RunService.RenderStepped, function()
     local center = Camera.ViewportSize / 2
 
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p) then
-            local char = p.Character
-            local hum  = char:FindFirstChildOfClass("Humanoid")
-            local root = char:FindFirstChild("HumanoidRootPart")
+        if p ~= LocalPlayer and p.Character and isAlive(p.Character) and isEnemy(p, false) then
             if BoneESPEnabled and hum then
                 local rig = hum.RigType == Enum.HumanoidRigType.R15 and BonesR15 or BonesR6
                 BoneLines[p] = BoneLines[p] or {}
@@ -2370,7 +2347,7 @@ connect(RunService.RenderStepped, function()
                             local dx = math.clamp(half + flat:Dot(right) * scale, 6, RadarSize - 6)
                             local dy = math.clamp(half - flat:Dot(forward) * scale, 6, RadarSize - 6)
                             dot.Position         = UDim2.fromOffset(dx, dy)
-                            dot.BackgroundColor3 = isEnemy(p) and Theme.RadarEnemy or Theme.RadarSelf
+                            dot.BackgroundColor3 = isEnemy(p, true) and Theme.RadarEnemy or Theme.RadarSelf
                             dot.Visible          = true
                         end
                     end
